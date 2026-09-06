@@ -72,10 +72,12 @@ qt_add_qml_module(ax310_gui
 # agreement with the interface by anyone with a checkout.
 add_executable(ax310_screenshot app/Screenshot.cpp)
 target_link_libraries(ax310_screenshot PRIVATE ax310_gui)
+ax310_place_runtime_dlls(ax310_screenshot)
 set_target_properties(ax310_screenshot PROPERTIES AUTOMOC ON)
 
 add_executable(ax310_app app/main.cpp)
 target_link_libraries(ax310_app PRIVATE ax310_gui)
+ax310_place_runtime_dlls(ax310_app)
 set_target_properties(ax310_app PROPERTIES AUTOMOC ON)
 
 
@@ -125,6 +127,7 @@ if(AX310_BUILD_TESTS)
         # one links Qt -- so without the directory holding Qt6Core.dll on the
         # search path the build fails at 0xc0000135, STATUS_DLL_NOT_FOUND, with
         # no output and nothing naming Qt. It is ignored where it is not needed.
+        ax310_place_runtime_dlls(ax310_gui_test)
         catch_discover_tests(ax310_gui_test
             PROPERTIES SKIP_RETURN_CODE 4
             DL_PATHS "$<TARGET_FILE_DIR:Qt6::Core>")

@@ -16,9 +16,11 @@ target_link_libraries(ax310_tools_capture PUBLIC ax310)
 
 add_executable(ax310_decode DecodeCapture.cpp)
 target_link_libraries(ax310_decode PRIVATE ax310_tools_capture)
+ax310_place_runtime_dlls(ax310_decode)
 
 add_executable(ax310_probe Probe.cpp)
 target_link_libraries(ax310_probe PRIVATE ax310)
+ax310_place_runtime_dlls(ax310_probe)
 
 # Writes docs/wire-protocol.md out of the tables that implement the protocol.
 #
@@ -29,6 +31,7 @@ target_link_libraries(ax310_probe PRIVATE ax310)
 # line that differs and the command that fixes it.
 add_executable(ax310_spec SpecGen.cpp)
 target_link_libraries(ax310_spec PRIVATE ax310)
+ax310_place_runtime_dlls(ax310_spec)
 
 if(AX310_BUILD_TESTS)
     add_test(NAME "wire-specification is what the headers say"

@@ -83,6 +83,7 @@ include(PedanticCompiler)
 include(Sanitizers)
 include(Coverage)
 include(ClangTidy)
+include(RuntimeDlls)
 
 add_subdirectory(src)
 
