@@ -182,9 +182,17 @@ captures name them.
 - ~~**Surround brightness reaches the strip twice.**~~ It does not. Byte 4 is the
   frequency and nothing else; brightness is applied to the colour, `0x19` to
   `0xff`, in every mode and on every light this device has.
-- ~~**Byte 4 in solid mode.**~~ Not a parameter. Ten presets sent `0xfb` for all
-  ten colours, and both ends of the brightness slider sent `0xfb` too. Stale
-  struct memory, like bytes 6-7 of a `0xc0` record.
+- **Byte 4 in solid mode does something, and we do not know what.** The vendor
+  never varies it usefully — `0xfb` for all ten colour presets and at both ends of
+  the brightness slider — but driving it by hand produces colour effects on the
+  strip that have not been characterised yet. Wants a systematic sweep: hold the
+  mode, colour and everything else fixed, step the byte through its range, and
+  describe what the strip does at each value. No VM needed, only the deck and
+  somebody looking at it.
+
+  An earlier entry closed this as stale struct memory. That conclusion was drawn
+  from captures, which can only show what the vendor's software writes, never what
+  the deck does with what it receives.
 - ~~**The surround record's channel order is unverified.**~~ Settled on hardware:
   `ff 00 00` is red, so bytes 7-9 are R-G-B as written.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries

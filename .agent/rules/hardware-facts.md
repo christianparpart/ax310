@@ -449,17 +449,25 @@ dragged slider cannot distinguish a line from a gentle curve.
 The dark channels stay at zero when dimmed; the floor is not a colour shift, or
 a dimmed red would wash out to pink.
 
-**Byte 4 in solid mode is not a parameter.** It carries `0x7d`, `0xcd`, `0xf8` or
-`0xfb`, and it is neither of the two things it could have been:
+**Byte 4 in solid mode is unexplained, and the deck does read it.** The vendor
+puts `0x7d`, `0xcd`, `0xf8` or `0xfb` there, and what it puts there tracks neither
+of the two things it could have:
 
 * Not brightness. `b100` and `b0`, the two ends of the slider, both sent `0xfb`
   while the colour travelled the whole distance.
-* Not colour. Clicking through all ten of the vendor's presets sent `0xfb` for
-  every one of them, twenty-two records with ten different colours in them.
+* Not colour. Clicking through all ten presets sent `0xfb` for every one of them,
+  twenty-two records with ten different colours in them.
 
-It moved only transiently, from `0xcd` to `0xfb` in the middle of a drag with
-nothing else written. Treated as stale struct memory, the same as bytes 6 and 7 of
-a `0xc0` record, and not read again.
+Those two say what the *vendor's software* does with the byte. They do not say
+what the *deck* does with it, and the two came apart here: driving the byte by
+hand produces colour effects on the strip that have not been described yet.
+
+So the vendor never varies it in a way a capture could show, and the deck reacts
+to it anyway. An earlier version of this entry concluded from those same two
+observations that the byte was stale struct memory -- a claim about the device
+drawn from evidence that only covered the host. Worth remembering as its own
+trap: "the vendor never exercises this field" and "this field does nothing" are
+different statements, and only the first one is in a capture.
 
 An earlier version of this entry said byte 4 was brightness in solid, on a single
 capture in which brightness and byte 4 happened to move together. Two things

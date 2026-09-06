@@ -189,7 +189,7 @@ Address `0xe0` drives the surround light strip:
 
 | Mode | Selector | Frequency read | Colour used |
 | --- | --- | --- | --- |
-| Solid | `0x34` | no, and what it carries is unexplained | yes |
+| Solid | `0x34` | not as a frequency; see below | yes |
 | Pulsing | `0x38` | yes | yes |
 | Blinking | `0x2c` | yes | yes |
 | Pulsing RGB | `0x28` | yes | no, it cycles hues |
@@ -197,6 +197,8 @@ Address `0xe0` drives the surround light strip:
 | Scrolling RGB | `0x24` | yes | no, it cycles hues |
 
 The selectors are four apart rather than one; what the low two bits are for is unknown, and every captured record has them clear. The frequency slider's ends gave `0x01` and `0x0a`.
+
+In Solid the frequency byte still does something: the vendor leaves one of a few resting values there, and driving it by hand changes how the strip looks. What it controls has not been characterised.
 
 **No light on this device has a brightness field.** Brightness is applied to the colour before it is sent, spanning `0x19` to `0xff` per channel -- on the strip in every mode, and on the buttons and rings the same way.
 

@@ -459,7 +459,7 @@ void writeSpec(Document& out)
         out.line("| {} | `{}` | {} | {} |",
                  nameOf(mode),
                  hex(selectorFor(mode)),
-                 isAnimated(mode) ? "yes" : "no, and what it carries is unexplained",
+                 isAnimated(mode) ? "yes" : "not as a frequency; see below",
                  cyclesHues(mode) ? "no, it cycles hues" : "yes");
     out.line("");
     out.line("The selectors are four apart rather than one; what the low two bits are for is "
@@ -467,6 +467,10 @@ void writeSpec(Document& out)
              "gave `{}` and `{}`.",
              hex(MinSurroundFrequency),
              hex(MaxSurroundFrequency));
+    out.line("");
+    out.line("In Solid the frequency byte still does something: the vendor leaves one of a "
+             "few resting values there, and driving it by hand changes how the strip looks. "
+             "What it controls has not been characterised.");
     out.line("");
     out.line("**No light on this device has a brightness field.** Brightness is applied to the "
              "colour before it is sent, spanning `{}` to `{}` per channel -- on the strip in "

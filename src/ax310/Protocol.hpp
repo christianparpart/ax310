@@ -313,15 +313,22 @@ static_assert(rowsInEnumeratorOrder(AllSurroundModes));
 inline constexpr std::uint8_t MinSurroundFrequency = 0x01;
 inline constexpr std::uint8_t MaxSurroundFrequency = 0x0a;
 
-/// What the vendor puts in the frequency byte when the mode does not animate.
+/// What the vendor's software leaves in the frequency byte in Solid.
 ///
-/// Solid has no frequency, and the byte still carries something: `0x7d`, `0xcd`,
-/// `0xf8` and `0xfb` have all been seen there, changing mid-drag with nothing else
-/// written. It is **not** brightness -- captures at each end of the brightness
-/// slider both sent `0xfb` while the colour moved the whole way -- and what it is
-/// has not been determined. This is one of the resting values, sent because
-/// replaying a shape that has been observed is the rule this project writes under.
-inline constexpr std::uint8_t SolidFrequencyFiller = 0xf8;
+/// `0x7d`, `0xcd`, `0xf8` and `0xfb` have all been seen there, changing mid-drag
+/// with nothing else written. What the vendor puts in it tracks neither of the two
+/// things it plausibly could: both ends of the brightness slider sent `0xfb`, and
+/// so did all ten colour presets.
+///
+/// **That is a fact about the vendor's software, not about the deck.** Driving the
+/// byte by hand produces colour effects on the strip that have not been
+/// characterised, so the deck does read it -- the vendor simply never varies it in
+/// a way a capture could show. An earlier version of this comment called the byte
+/// stale struct memory, which the captures could not have established.
+///
+/// This value is one of the resting ones, sent because replaying an observed shape
+/// is the rule this project writes under. See docs/todo.md.
+inline constexpr std::uint8_t SolidFrequencyAtRest = 0xf8;
 
 /// The range a colour channel spans as the vendor's brightness slider moves.
 ///
@@ -371,11 +378,12 @@ inline constexpr std::uint8_t MaxLightChannel = 0xff;
 /// An earlier reading of these bytes had byte 4 carrying brightness in Solid. It
 /// came from one capture in which brightness and byte 4 moved together, and three
 /// later captures refuted it: at both ends of the brightness slider byte 4 was
-/// `0xfb` while the colour moved the whole way. See SolidFrequencyFiller.
+/// `0xfb` while the colour moved the whole way. See SolidFrequencyAtRest.
 ///
 /// @param mode Which animation.
-/// @param frequency How fast it animates. Ignored by the deck when the mode does
-///        not animate; pass SolidFrequencyFiller there.
+/// @param frequency How fast it animates. In Solid the deck does something else
+///        with this byte that is not yet characterised; pass SolidFrequencyAtRest
+///        there unless deliberately exploring it.
 /// The channel order is red, green, blue, confirmed by driving `ff 00 00` at the
 /// strip and looking at it. Nothing in the captures could settle it: the vendor's
 /// ten presets are a hue wheel, and a hue wheel read backwards is still one.
@@ -399,7 +407,7 @@ inline constexpr std::uint8_t MaxLightChannel = 0xff;
 /// @return The ten values to write to SurroundAddress.
 [[nodiscard]] constexpr std::array<std::uint8_t, 10> surroundOffRecord() noexcept
 {
-    return surroundRecord(SurroundMode::Solid, SolidFrequencyFiller, 0x00, 0x00, 0x00);
+    return surroundRecord(SurroundMode::Solid, SolidFrequencyAtRest, 0x00, 0x00, 0x00);
 }
 
 /// The display command group: `[0x01][0x0a][level]`, and that is the whole of it.
