@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "DeviceBridge.hpp"
 
+#include <ax310/IConsole.hpp>
+
 #include <QBuffer>
 #include <QCommandLineParser>
 #include <QGuiApplication>
@@ -32,6 +34,7 @@ constexpr int ScreenHeight = 480;
 
 int main(int argc, char* argv[])
 {
+    ax310::SystemConsole console;
     QGuiApplication app(argc, argv);
 
     QCommandLineParser parser;
@@ -70,7 +73,7 @@ int main(int argc, char* argv[])
         auto const percent = parser.value(brightnessOption).toInt(&isNumber);
         if (!isNumber)
         {
-            std::puts("--led-brightness wants a number from 0 to 100");
+            writeLine(console, "--led-brightness wants a number from 0 to 100");
             return 2;
         }
 

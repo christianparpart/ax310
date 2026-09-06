@@ -10,6 +10,7 @@
 #include <app/DeviceBridge.hpp>
 #include <ax310/FakeHidTransport.hpp>
 #include <ax310/IClock.hpp>
+#include <ax310/IConsole.hpp>
 #include <ax310/ILogger.hpp>
 #include <ax310/Protocol.hpp>
 
@@ -110,12 +111,13 @@ int main(int argc, char* argv[])
     qputenv("QT_QUICK_BACKEND", "software");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
 
+    SystemConsole console;
     QGuiApplication const application { argc, argv };
 
     auto const directory = QString::fromUtf8(argc > 1 ? argv[1] : "docs/images");
     if (!QDir().mkpath(directory))
     {
-        std::println(stderr, "could not create the output directory");
+        writeErrorLine(console, "could not create the output directory");
         return EXIT_FAILURE;
     }
 
@@ -163,18 +165,18 @@ int main(int argc, char* argv[])
         auto const image = shot.isWindow ? renderWindow(bridge, shot) : renderItem(bridge, shot);
         if (image.isNull())
         {
-            std::println(stderr, "could not render {}", shot.source);
+            writeErrorLine(console, "could not render {}", shot.source);
             return EXIT_FAILURE;
         }
 
         auto const path = directory + "/" + QString::fromUtf8(shot.file);
         if (!image.save(path, "PNG"))
         {
-            std::println(stderr, "could not write {}", path.toStdString());
+            writeErrorLine(console, "could not write {}", path.toStdString());
             return EXIT_FAILURE;
         }
 
-        std::println("wrote {} ({}x{})", path.toStdString(), image.width(), image.height());
+        writeLine(console, "wrote {} ({}x{})", path.toStdString(), image.width(), image.height());
     }
 
     return EXIT_SUCCESS;

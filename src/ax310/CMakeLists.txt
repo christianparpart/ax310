@@ -16,6 +16,8 @@ add_library(ax310
     HidApiTransport.cpp
     HidApiTransport.hpp
     IClock.hpp
+    IConsole.cpp
+    IConsole.hpp
     IHidTransport.hpp
     ILogger.cpp
     ILogger.hpp
@@ -35,6 +37,7 @@ if(AX310_BUILD_TESTS)
     add_executable(ax310_test
         Device_test.cpp
         Fakes_test.cpp
+        IConsole_test.cpp
         ILogger_test.cpp
         Protocol_test.cpp
         Types_test.cpp

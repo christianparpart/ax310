@@ -19,6 +19,7 @@
 ///   ax310_spec --write PATH   write it to PATH
 ///   ax310_spec --check PATH   exit non-zero if PATH is not what would be written
 
+#include <ax310/IConsole.hpp>
 #include <ax310/Protocol.hpp>
 #include <ax310/Types.hpp>
 
@@ -26,7 +27,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
-#include <print>
 #include <span>
 #include <sstream>
 #include <string>
@@ -399,6 +399,7 @@ void writeSpec(Document& out)
 
 int main(int argc, char* argv[])
 {
+    SystemConsole console;
     auto const arguments = std::span { argv, static_cast<std::size_t>(argc) };
 
     Document document;
@@ -407,14 +408,14 @@ int main(int argc, char* argv[])
 
     if (argc == 1)
     {
-        std::print("{}", generated);
+        console.write(generated);
         return EXIT_SUCCESS;
     }
 
     auto const command = std::string_view { arguments[1] };
     if (argc != 3 || (command != "--check" && command != "--write"))
     {
-        std::println(stderr, "usage: {} [--write PATH | --check PATH]", arguments[0]);
+        writeErrorLine(console, "usage: {} [--write PATH | --check PATH]", arguments[0]);
         return EXIT_FAILURE;
     }
 
@@ -425,18 +426,18 @@ int main(int argc, char* argv[])
         std::ofstream file { path, std::ios::binary | std::ios::trunc };
         if (!file)
         {
-            std::println(stderr, "could not write {}", path);
+            writeErrorLine(console, "could not write {}", path);
             return EXIT_FAILURE;
         }
         file << generated;
-        std::println("wrote {}", path);
+        writeLine(console, "wrote {}", path);
         return EXIT_SUCCESS;
     }
 
     std::ifstream file { path, std::ios::binary };
     if (!file)
     {
-        std::println(stderr, "{} does not exist -- run: ax310_spec --write {}", path, path);
+        writeErrorLine(console, "{} does not exist -- run: ax310_spec --write {}", path, path);
         return EXIT_FAILURE;
     }
 
@@ -458,14 +459,14 @@ int main(int argc, char* argv[])
             break;
         if (wantMore != haveMore || wantLine != haveLine)
         {
-            std::println(stderr, "{} is out of date, from line {}:", path, line);
-            std::println(stderr, "  committed: {}", haveMore ? haveLine : "(end of file)");
-            std::println(stderr, "  headers:   {}", wantMore ? wantLine : "(end of file)");
+            writeErrorLine(console, "{} is out of date, from line {}:", path, line);
+            writeErrorLine(console, "  committed: {}", haveMore ? haveLine : "(end of file)");
+            writeErrorLine(console, "  headers:   {}", wantMore ? wantLine : "(end of file)");
             break;
         }
     }
-    std::println(stderr, "");
-    std::println(stderr, "The wire specification is generated from Protocol.hpp and Types.hpp.");
-    std::println(stderr, "Run: ax310_spec --write {}", path);
+    writeErrorLine(console, "");
+    writeErrorLine(console, "The wire specification is generated from Protocol.hpp and Types.hpp.");
+    writeErrorLine(console, "Run: ax310_spec --write {}", path);
     return EXIT_FAILURE;
 }

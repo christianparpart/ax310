@@ -13,6 +13,7 @@
 #include "UsbmonCapture.hpp"
 
 #include <ax310/HidApiTransport.hpp>
+#include <ax310/IConsole.hpp>
 #include <ax310/Protocol.hpp>
 
 #include <algorithm>
@@ -21,7 +22,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
-#include <print>
 #include <span>
 #include <string>
 #include <string_view>
@@ -72,11 +72,11 @@ constexpr std::array<protocol::FramedCommand, 2> ToggleableEffects {
 }
 
 /// Opens the deck's control interface, without initialising anything.
-[[nodiscard]] bool openControl(HidApiTransport& transport)
+[[nodiscard]] bool openControl(HidApiTransport& transport, IConsole& console)
 {
     if (auto const started = transport.initialize(); !started)
     {
-        std::println(stderr, "hidapi would not start: {}", describe(started.error()));
+        writeErrorLine(console, "hidapi would not start: {}", describe(started.error()));
         return false;
     }
 
@@ -91,8 +91,7 @@ constexpr std::array<protocol::FramedCommand, 2> ToggleableEffects {
             return true;
     }
 
-    std::println(stderr,
-                 "no control-mode AX310 could be opened -- a VM holding the device "
+    writeErrorLine(console, "no control-mode AX310 could be opened -- a VM holding the device "
                  "takes it away from the host entirely");
     return false;
 }
@@ -118,7 +117,7 @@ constexpr std::array<protocol::FramedCommand, 2> ToggleableEffects {
     return std::vector<std::uint8_t> { values->begin(), values->begin() + static_cast<long>(length) };
 }
 
-void dumpKnownRegisters(HidApiTransport& transport)
+void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
 {
     // Reading 0x0f between the interesting ones scrubs the reply buffer: it
     // answers zeroes, so anything left over from a previous read becomes obvious
@@ -130,7 +129,7 @@ void dumpKnownRegisters(HidApiTransport& transport)
 
         if (!values)
         {
-            std::println("  0x{:02x}  {:<38}  <no answer>", preserved.address, name);
+            writeLine(console, "  0x{:02x}  {:<38}  <no answer>", preserved.address, name);
             continue;
         }
 
@@ -138,7 +137,7 @@ void dumpKnownRegisters(HidApiTransport& transport)
         for (auto const byte: *values)
             text += std::format("{:02x} ", byte);
 
-        std::println("  0x{:02x}  {:<38}  {}",
+        writeLine(console, "  0x{:02x}  {:<38}  {}",
                      preserved.address,
                      name.empty() ? std::string_view { "" } : name,
                      text);
@@ -148,8 +147,8 @@ void dumpKnownRegisters(HidApiTransport& transport)
 }
 
 /// Writes one track's level in one mix.
-[[nodiscard]] bool setLevel(HidApiTransport& transport, protocol::Property block, KnobId knob,
-                            std::uint8_t level)
+[[nodiscard]] bool setLevel(HidApiTransport& transport, IConsole& console,
+                            protocol::Property block, KnobId knob, std::uint8_t level)
 {
     auto const address = protocol::levelAddressOf(block, knob);
     std::array<std::uint8_t, 1> const values { level };
@@ -157,7 +156,7 @@ void dumpKnownRegisters(HidApiTransport& transport)
     if (!transport.sendFeatureReport(framed))
         return false;
 
-    std::println("{} level 0x{:02x} = {}", nameOf(knob), address, level);
+    writeLine(console, "{} level 0x{:02x} = {}", nameOf(knob), address, level);
     return true;
 }
 
@@ -174,7 +173,7 @@ void dumpKnownRegisters(HidApiTransport& transport)
 /// @param transport An open control interface.
 /// @param seconds How long to watch.
 /// @return Process status.
-int watchMeters(HidApiTransport& transport, int seconds)
+int watchMeters(HidApiTransport& transport, IConsole& console, int seconds)
 {
     std::array<int, KnobCount> peaks {};
     std::array<std::uint8_t, protocol::PaddedReportSize + 1> buffer {};
@@ -182,7 +181,7 @@ int watchMeters(HidApiTransport& transport, int seconds)
     std::string header;
     for (auto const knob: AllKnobs)
         header += std::format("{:>9}", nameOf(knob));
-    std::println("{}", header);
+    writeLine(console, "{}", header);
 
     auto const started = std::chrono::steady_clock::now();
     auto const deadline = started + std::chrono::seconds { seconds };
@@ -194,7 +193,7 @@ int watchMeters(HidApiTransport& transport, int seconds)
         auto const bytesRead = transport.read(buffer, std::chrono::milliseconds { 200 });
         if (!bytesRead)
         {
-            std::println(stderr, "the read failed");
+            writeErrorLine(console, "the read failed");
             return EXIT_FAILURE;
         }
         if (*bytesRead == 0)
@@ -223,15 +222,15 @@ int watchMeters(HidApiTransport& transport, int seconds)
         std::string line;
         for (auto const knob: AllKnobs)
             line += std::format("{:>8}%", protocol::toPercent(report.audioMeters[indexOf(knob)]));
-        std::println("{}", line);
+        writeLine(console, "{}", line);
     }
 
     std::string summary;
     for (auto const knob: AllKnobs)
         summary += std::format("{:>8}%", protocol::toPercent(peaks[indexOf(knob)]));
-    std::println("");
-    std::println("{}", header);
-    std::println("{}   <- peak over {} reports", summary, reports);
+    writeLine(console, "");
+    writeLine(console, "{}", header);
+    writeLine(console, "{}   <- peak over {} reports", summary, reports);
 
     // The same six numbers again, in knob order and nothing else on the line, so
     // a script can read them. scripts/setup-audio.sh identifies each channel this
@@ -239,35 +238,34 @@ int watchMeters(HidApiTransport& transport, int seconds)
     std::string machine = "peak";
     for (auto const knob: AllKnobs)
         machine += std::format(" {}", protocol::toPercent(peaks[indexOf(knob)]));
-    std::println("{}", machine);
+    writeLine(console, "{}", machine);
 
     if (reports == 0)
-        std::println(stderr, "the deck sent nothing -- is another program holding it?");
+        writeErrorLine(console, "the deck sent nothing -- is another program holding it?");
 
     return reports > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-int usage(std::string_view program)
+int usage(IConsole& console, std::string_view program)
 {
-    std::println(stderr, "usage: {} <command>", program);
-    std::println(stderr, "  --dump                 read every register the handshake overwrites");
-    std::println(stderr, "  --read <addr> <len>    read one register, both decimal or 0x-free hex");
-    std::println(stderr, "  --effect <cmd> <0|1>   toggle one known effect enable");
-    std::println(stderr, "  --level <1|2> <knob> <00..14>  set one track's level in one mix (hex)");
-    std::println(stderr, "  --meters [seconds]     watch the per-track meters, and report their peaks");
-    std::println(stderr, "");
-    std::println(stderr, "  knobs, as printed on the deck:");
-    std::println(stderr, "    {}", []() {
+    writeErrorLine(console, "usage: {} <command>", program);
+    writeErrorLine(console, "  --dump                 read every register the handshake overwrites");
+    writeErrorLine(console, "  --read <addr> <len>    read one register, both decimal or 0x-free hex");
+    writeErrorLine(console, "  --effect <cmd> <0|1>   toggle one known effect enable");
+    writeErrorLine(console, "  --level <1|2> <knob> <00..14>  set one track's level in one mix (hex)");
+    writeErrorLine(console, "  --meters [seconds]     watch the per-track meters, and report their peaks");
+    writeErrorLine(console, "");
+    writeErrorLine(console, "  knobs, as printed on the deck:");
+    writeErrorLine(console, "    {}", []() {
         std::string names;
         for (auto const knob: AllKnobs)
             names += std::format("{}  ", nameOf(knob));
         return names;
     }());
-    std::println(stderr, "");
-    std::println(stderr, "  effects that may be toggled:");
+    writeErrorLine(console, "");
+    writeErrorLine(console, "  effects that may be toggled:");
     for (auto const effect: ToggleableEffects)
-        std::println(stderr,
-                     "    {:02x}  {}",
+        writeErrorLine(console, "    {:02x}  {}",
                      static_cast<std::uint8_t>(effect),
                      protocol::nameIn(protocol::FramedCommandNames, static_cast<std::uint8_t>(effect)));
     return EXIT_FAILURE;
@@ -277,19 +275,21 @@ int usage(std::string_view program)
 
 int main(int argc, char* argv[])
 {
+    SystemConsole console;
+
     auto const arguments = std::span { argv, static_cast<std::size_t>(argc) };
     if (argc < 2)
-        return usage(arguments[0]);
+        return usage(console, arguments[0]);
 
     auto const command = std::string_view { arguments[1] };
 
     HidApiTransport transport;
-    if (!openControl(transport))
+    if (!openControl(transport, console))
         return EXIT_FAILURE;
 
     if (command == "--dump")
     {
-        dumpKnownRegisters(transport);
+        dumpKnownRegisters(transport, console);
         return EXIT_SUCCESS;
     }
 
@@ -298,11 +298,11 @@ int main(int argc, char* argv[])
         auto const seconds = argc == 3 ? parseHex(arguments[2]) : std::optional<unsigned> { 10 };
         if (!seconds || *seconds == 0 || *seconds > 600)
         {
-            std::println(stderr, "--meters takes a number of seconds, 1 to 600");
+            writeErrorLine(console, "--meters takes a number of seconds, 1 to 600");
             return EXIT_FAILURE;
         }
 
-        return watchMeters(transport, static_cast<int>(*seconds));
+        return watchMeters(transport, console, static_cast<int>(*seconds));
     }
 
     if (command == "--read" && argc == 4)
@@ -311,20 +311,20 @@ int main(int argc, char* argv[])
         auto const length = parseHex(arguments[3]);
         if (!address || !length || *address > 0xff || *length == 0 || *length > protocol::MaxPreservedLength)
         {
-            std::println(stderr, "address must be 00..ff and length 1..{}", protocol::MaxPreservedLength);
+            writeErrorLine(console, "address must be 00..ff and length 1..{}", protocol::MaxPreservedLength);
             return EXIT_FAILURE;
         }
 
         auto const values = readRegister(transport, static_cast<std::uint8_t>(*address), *length);
         if (!values)
         {
-            std::println(stderr, "0x{:02x} did not answer", *address);
+            writeErrorLine(console, "0x{:02x} did not answer", *address);
             return EXIT_FAILURE;
         }
 
         for (auto const byte: *values)
-            std::print("{:02x} ", byte);
-        std::println("");
+            write(console, "{:02x} ", byte);
+        writeLine(console, "");
         return EXIT_SUCCESS;
     }
 
@@ -335,14 +335,15 @@ int main(int argc, char* argv[])
         auto const level = parseHex(arguments[4]);
         if ((mix != "1" && mix != "2") || !knob || !level || *level > 0x14)
         {
-            std::println(stderr, "usage: --level <1|2> <knob name> <00..14, hex like the other commands>");
+            writeErrorLine(console, "usage: --level <1|2> <knob name> <00..14, hex like the other commands>");
             return EXIT_FAILURE;
         }
 
         auto const block =
             mix == "1" ? protocol::Property::CreatorMixLevels : protocol::Property::AudienceMixLevels;
-        return setLevel(transport, block, *knob, static_cast<std::uint8_t>(*level)) ? EXIT_SUCCESS
-                                                                                   : EXIT_FAILURE;
+        return setLevel(transport, console, block, *knob, static_cast<std::uint8_t>(*level))
+               ? EXIT_SUCCESS
+               : EXIT_FAILURE;
     }
 
     if (command == "--effect" && argc == 4)
@@ -350,13 +351,12 @@ int main(int argc, char* argv[])
         auto const which = parseHex(arguments[2]);
         auto const value = parseHex(arguments[3]);
         if (!which || !value || *value > 1)
-            return usage(arguments[0]);
+            return usage(console, arguments[0]);
 
         auto const wanted = static_cast<protocol::FramedCommand>(*which);
         if (std::ranges::find(ToggleableEffects, wanted) == ToggleableEffects.end())
         {
-            std::println(stderr,
-                         "refusing 0x{:02x}: only confirmed effect enables may be toggled",
+            writeErrorLine(console, "refusing 0x{:02x}: only confirmed effect enables may be toggled",
                          *which);
             return EXIT_FAILURE;
         }
@@ -364,15 +364,15 @@ int main(int argc, char* argv[])
         auto const framed = protocol::frameFeatureReport(framedEnable(wanted, static_cast<std::uint8_t>(*value)));
         if (!transport.sendFeatureReport(framed))
         {
-            std::println(stderr, "the write failed");
+            writeErrorLine(console, "the write failed");
             return EXIT_FAILURE;
         }
 
-        std::println("sent {} = 0x{:02x}",
+        writeLine(console, "sent {} = 0x{:02x}",
                      protocol::nameIn(protocol::FramedCommandNames, static_cast<std::uint8_t>(wanted)),
                      *value);
         return EXIT_SUCCESS;
     }
 
-    return usage(arguments[0]);
+    return usage(console, arguments[0]);
 }

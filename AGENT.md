@@ -821,6 +821,19 @@ and disagrees with how this code is written.
 `llvm-include-order` is enabled but does not enforce this: it only checks that a
 block is internally sorted, and cannot see a block in the wrong place.
 
+**Nothing writes to stdout or stderr directly.** `IConsole` is the fourth
+injected seam, beside `IHidTransport`, `IClock` and `ILogger`, and
+`IConsole.cpp` is the only file in the tree that names either stream. A tool
+takes one; `main()` gives it a `SystemConsole`; a test gives it a
+`CapturingConsole` and asserts on what came out, including which of the two
+streams it went to. `ConsoleLogger` writes through it too, which is what made
+the log line itself testable.
+
+That is a portability boundary as much as a testing one. The ostream overloads of
+`std::print` are C++23's P2539 -- libstdc++ has them, MSVC's `<print>` does not --
+and finding that out cost a build. One file to keep portable is better than
+seven.
+
 **`docs/` is a published website.** GitHub Pages serves it from `master` at
 <https://christianparpart.github.io/ax310/>, with Jekyll. So `docs/_config.yml`,
 `docs/_layouts/` and `docs/assets/` are load-bearing, a new page needs YAML front

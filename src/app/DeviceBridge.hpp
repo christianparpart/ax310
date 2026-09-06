@@ -236,7 +236,8 @@ class DeviceBridge final: public QObject, public IDeviceListener
     // constructor leaves all three empty and borrows instead.
     std::unique_ptr<HidApiTransport> _ownedTransport;
     std::unique_ptr<SystemClock> _ownedClock;
-    std::unique_ptr<StderrLogger> _ownedLogger;
+    std::unique_ptr<SystemConsole> _ownedConsole;
+    std::unique_ptr<ConsoleLogger> _ownedLogger;
 
     IHidTransport& _transport;
     IClock& _clock;
