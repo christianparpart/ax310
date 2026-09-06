@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: Apache-2.0
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <optional>
+#include <cstdint>
+#include <ranges>
+#include <string_view>
+
+/// Vocabulary types for the AX310 device API.
+///
+/// Everything here is Qt-free and free of wire layout: these are the names the
+/// rest of the program uses to talk about buttons, knobs and device state. The
+/// bits that represent them in a HID report live in Protocol.h, in one table
+/// each, so no caller ever handles a raw mask.
+namespace ax310
+{
+
+/// One of the four physical buttons, identified by position rather than by the
+/// bit that reports it.
+enum class Button : std::uint8_t
+{
+    TopLeft = 0,
+    TopRight = 1,
+    BottomLeft = 2,
+    BottomRight = 3,
+
+    Last = BottomRight
+};
+
+/// Number of physical buttons, derived from the enumeration rather than stated.
+inline constexpr std::size_t ButtonCount = static_cast<std::size_t>(Button::Last) + 1;
+
+/// Every Button, in enumerator order, for iterating without an index loop.
+inline constexpr std::array<Button, ButtonCount> AllButtons {
+    Button::TopLeft,
+    Button::TopRight,
+    Button::BottomLeft,
+    Button::BottomRight,
+};
+
+/// The deck's six rotary knobs, named as they are printed on its face, left to
+/// right. The first three are physical inputs and the last three are the host's
+/// digital tracks -- which is why the deck presents six playback channels as three
+/// stereo pairs and the vendor's manual lists exactly three playback devices.
+enum class KnobId : std::uint8_t
+{
+    Mic = 0,
+    LineIn = 1,
+    Console = 2,
+    System = 3,
+    Game = 4,
+    Chat = 5,
+
+    Last = Chat
+};
+
+/// Number of rotary knobs, derived from the enumeration rather than stated.
+inline constexpr std::size_t KnobCount = static_cast<std::size_t>(KnobId::Last) + 1;
+
+/// What each knob is called, as printed on the deck, indexed by the enumerator.
+inline constexpr std::array<std::string_view, KnobCount> KnobNames {
+    "Mic", "Line In", "Console", "System", "Game", "Chat"
+};
+
+/// @param knob The knob to name.
+/// @return Its printed label.
+[[nodiscard]] constexpr std::string_view nameOf(KnobId knob) noexcept
+{
+    return KnobNames[static_cast<std::size_t>(knob)];
+}
+
+/// Which of the deck's two independent mixes a level belongs to.
+///
+/// The deck carries two complete six-track mixes and applies each to a different
+/// destination, so a level is meaningless without saying which mix it is in.
+enum class MixId : std::uint8_t
+{
+    /// What the streamer hears in the headphones.
+    Creator = 0,
+
+    /// What the stream captures. Adjusting it is inaudible to the streamer,
+    /// which is exactly why it needs to be visible in the interface.
+    Audience = 1,
+
+    Last = Audience
+};
+
+/// Number of mixes, derived from the enumeration rather than stated.
+inline constexpr std::size_t MixCount = static_cast<std::size_t>(MixId::Last) + 1;
+
+/// What each mix is called, indexed by the enumerator.
+inline constexpr std::array<std::string_view, MixCount> MixNames { "Creator", "Audience" };
+
+/// Every MixId, in enumerator order, for iterating without an index loop.
+inline constexpr std::array<MixId, MixCount> AllMixes { MixId::Creator, MixId::Audience };
+
+/// @param mix The mix to name.
+/// @return Its display label.
+[[nodiscard]] constexpr std::string_view nameOf(MixId mix) noexcept
+{
+    return MixNames[static_cast<std::size_t>(mix)];
+}
+
+/// One track's level in one mix.
+///
+/// A named type rather than a bare `int` because the two scales in play do not
+/// interchange safely. The deck stores a level in **steps**, `0..20`; a person
+/// thinks in **percent**. Those happen to convert exactly -- 21 steps means one
+/// step is 5% -- so neither direction rounds, and that is worth locking in rather
+/// than rediscovering: the older `setKnobVolume` took an `int percent` and
+/// truncated it with `percent * 20 / 100`, quietly snapping 24% to 20%.
+///
+/// The wire always carries steps. Percent belongs to the interface and is
+/// converted at the boundary, never carried inward.
+class Level
+{
+  public:
+    /// Highest step the hardware accepts.
+    static constexpr int MaxSteps = 20;
+
+    /// Percent per step. Exact, and asserted below.
+    static constexpr int PercentPerStep = 5;
+
+    /// A silent track.
+    constexpr Level() noexcept = default;
+
+    /// @param steps Steps, clamped into `0..MaxSteps`.
+    /// @return The level.
+    [[nodiscard]] static constexpr Level fromSteps(int steps) noexcept
+    {
+        return Level { static_cast<std::uint8_t>(std::clamp(steps, 0, MaxSteps)) };
+    }
+
+    /// @param percent Percent, clamped into `0..100` and rounded to the nearest
+    ///        reachable step -- the hardware has no finer resolution, so a
+    ///        caller asking for 23% gets 25% rather than silently losing it.
+    /// @return The level.
+    [[nodiscard]] static constexpr Level fromPercent(int percent) noexcept
+    {
+        auto const clamped = std::clamp(percent, 0, 100);
+        return fromSteps((clamped + (PercentPerStep / 2)) / PercentPerStep);
+    }
+
+    /// @return The level in the hardware's own steps, for the wire.
+    [[nodiscard]] constexpr std::uint8_t steps() const noexcept { return _steps; }
+
+    /// @return The level in percent, for a person.
+    [[nodiscard]] constexpr int asPercent() const noexcept { return _steps * PercentPerStep; }
+
+    [[nodiscard]] constexpr bool operator==(Level const&) const noexcept = default;
+
+  private:
+    constexpr explicit Level(std::uint8_t steps) noexcept: _steps { steps } {}
+
+    std::uint8_t _steps = 0;
+};
+
+static_assert(Level::MaxSteps * Level::PercentPerStep == 100,
+              "steps and percent must convert exactly, or one of the two scales lies");
+
+/// @param name A knob label, as spelled in KnobNames, case-sensitive.
+/// @return The matching knob, or nothing when @p name is not one of them.
+[[nodiscard]] constexpr std::optional<KnobId> knobFromName(std::string_view name) noexcept
+{
+    for (std::size_t index = 0; index < KnobCount; ++index)
+        if (KnobNames[index] == name)
+            return static_cast<KnobId>(index);
+
+    return std::nullopt;
+}
+
+/// Every KnobId, in enumerator order, for iterating without an index loop.
+inline constexpr std::array<KnobId, KnobCount> AllKnobs {
+    KnobId::Mic, KnobId::LineIn, KnobId::Console, KnobId::System, KnobId::Game, KnobId::Chat,
+};
+
+/// Whether a knob's capacitive surface is currently being touched.
+enum class Touch : std::uint8_t
+{
+    Released,
+    Touched
+};
+
+/// Where a contact on the 800x480 touch screen is in its life.
+///
+/// The deck reports position and a contact flag on every report while a finger
+/// is down; it does not say "this is a new touch". The driver derives that, so
+/// a host can post a press, then moves, then a release -- the sequence a UI
+/// toolkit expects. Repeating a press for every report instead makes a tap
+/// register for a single frame and a drag hold the button down, which is
+/// exactly how it behaved.
+enum class TouchPhase : std::uint8_t
+{
+    Released = 0, ///< The finger has just come off.
+    Pressed = 1,  ///< The finger has just gone down.
+    Moved = 2     ///< The finger is still down and has a new position.
+};
+
+/// Which of the AX310's two USB personalities is currently on the bus.
+///
+/// The deck enumerates in Base mode, is handed its initialisation sequence, and
+/// re-appears in Control mode. Same hardware, different product id and a
+/// different HID interface; Protocol.h holds which is which.
+enum class DeviceMode : std::uint8_t
+{
+    Base = 0,
+    Control = 1,
+
+    Last = Control
+};
+
+/// Number of device modes, derived from the enumeration rather than stated.
+inline constexpr std::size_t DeviceModeCount = static_cast<std::size_t>(DeviceMode::Last) + 1;
+
+/// Where the device is in its connect / re-enumerate / run cycle.
+///
+/// Connecting is not a failure: the device enumerates in base mode (0310), is
+/// handed its initialisation sequence, and only then re-appears in control mode
+/// (1310). Between those two moments there is nothing to talk to.
+enum class ConnectionState : std::uint8_t
+{
+    Disconnected,
+    Connecting,
+    Connected
+};
+
+/// Why a device operation failed.
+enum class DeviceError : std::uint8_t
+{
+    HidInitFailed = 0,
+    DeviceNotFound = 1,
+    OpenFailed = 2,
+    NotConnected = 3,
+    WriteFailed = 4,
+    ReadFailed = 5,
+
+    Last = ReadFailed
+};
+
+/// Number of DeviceError enumerators, derived from the enumeration.
+inline constexpr std::size_t DeviceErrorCount = static_cast<std::size_t>(DeviceError::Last) + 1;
+
+/// Human-readable text for each DeviceError, indexed by the enumerator.
+inline constexpr std::array<std::string_view, DeviceErrorCount> DeviceErrorTexts {
+    "hidapi initialisation failed",
+    "no AX310 found on the USB bus",
+    "the AX310 HID interface could not be opened",
+    "the device is not connected",
+    "writing to the device failed",
+    "reading from the device failed",
+};
+
+/// @param error The error to describe.
+/// @return Human-readable text for @p error.
+[[nodiscard]] constexpr std::string_view describe(DeviceError error) noexcept
+{
+    return DeviceErrorTexts[static_cast<std::size_t>(error)];
+}
+
+/// @param knob The knob to index.
+/// @return The knob's zero-based position, for indexing a per-knob table.
+[[nodiscard]] constexpr std::size_t indexOf(KnobId knob) noexcept
+{
+    return static_cast<std::size_t>(knob);
+}
+
+/// @param mix The mix to index.
+/// @return The mix's zero-based position, for indexing a per-mix table.
+[[nodiscard]] constexpr std::size_t indexOf(MixId mix) noexcept
+{
+    return static_cast<std::size_t>(mix);
+}
+
+/// @param mode The mode to index.
+/// @return The mode's zero-based position, for indexing a per-mode table.
+[[nodiscard]] constexpr std::size_t indexOf(DeviceMode mode) noexcept
+{
+    return static_cast<std::size_t>(mode);
+}
+
+/// @param button The button to index.
+/// @return The button's zero-based position, for indexing a per-button table.
+[[nodiscard]] constexpr std::size_t indexOf(Button button) noexcept
+{
+    return static_cast<std::size_t>(button);
+}
+
+/// @param rows A table meant to be indexed by its enumerator.
+/// @return Whether every row sits at the index of the enumerator it names.
+template <typename Enum, std::size_t N>
+[[nodiscard]] constexpr bool rowsInEnumeratorOrder(std::array<Enum, N> const& rows) noexcept
+{
+    return std::ranges::all_of(std::views::iota(std::size_t { 0 }, N),
+                               [&rows](std::size_t index) { return indexOf(rows[index]) == index; });
+}
+
+// A row in the wrong place would make every "iterate AllX" loop visit the wrong
+// thing, silently and only at run time. The extent is taken from the enum's own
+// Last, so an enumerator added without a row here does not compile.
+/// The same guard for a table of rows rather than of enumerators.
+///
+/// @param rows The table to check.
+/// @param project How to get a row's enumerator.
+/// @return Whether every row sits at its own enumerator's index.
+///
+/// Anchoring a table's length on a named enumerator only fires when nothing is
+/// wrong; this fires when a row is inserted in the wrong place, which is the
+/// mistake that actually happens.
+template <typename Row, std::size_t N, typename Project>
+[[nodiscard]] constexpr bool rowsInEnumeratorOrder(std::array<Row, N> const& rows,
+                                                   Project project) noexcept
+{
+    return std::ranges::all_of(std::views::iota(std::size_t { 0 }, N), [&](std::size_t index) {
+        return indexOf(project(rows[index])) == index;
+    });
+}
+
+static_assert(rowsInEnumeratorOrder(AllButtons), "AllButtons must list every Button at its own index");
+static_assert(rowsInEnumeratorOrder(AllKnobs), "AllKnobs must list every KnobId at its own index");
+static_assert(rowsInEnumeratorOrder(AllMixes), "AllMixes must list every MixId at its own index");
+
+} // namespace ax310

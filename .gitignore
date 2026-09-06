@@ -1,0 +1,21 @@
+/build/
+/out/
+/.cache/
+compile_commands.json
+
+# Reverse-engineering artefacts: captures are large and machine-specific.
+/ax310_capture.log
+/ax310_summary.txt
+/lsusb_full.txt
+/scripts/jpegs/
+/scripts/jpegs_fixed/
+
+# One-action USB captures produced by scripts/capture_action.py.
+captures/
+
+# Python bytecode.
+__pycache__/
+
+# Jekyll builds the site here when it is built locally.
+docs/_site/
+docs/.jekyll-cache/

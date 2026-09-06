@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+<meta name="description" content="{{ page.description | default: site.description | strip_newlines }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+</head>
+<body>
+
+<header class="bar">
+  <a class="wordmark" href="{{ '/' | relative_url }}">AX310</a>
+  <nav>
+    <a href="{{ '/' | relative_url }}">Overview</a>
+    <a href="{{ '/wire-protocol.html' | relative_url }}">Wire spec</a>
+    <a href="{{ '/capabilities.html' | relative_url }}">Capabilities</a>
+    <a href="https://github.com/christianparpart/ax310">Source</a>
+  </nav>
+</header>
+
+<div class="alpha" role="note">
+  <strong>Early development.</strong> This is a reverse-engineering project in
+  progress. The protocol is only partly mapped, interfaces change without notice,
+  and attaching it to a deck is not side-effect-free. Do not point it at hardware
+  somebody is streaming with.
+</div>
+
+<main>
+{{ content }}
+</main>
+
+<footer>
+  <p>Apache-2.0. Not affiliated with, endorsed by, or sponsored by AVerMedia
+  Technologies, Inc. Their names appear only to say which hardware this talks to.</p>
+</footer>
+
+</body>
+</html>

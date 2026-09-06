@@ -1,0 +1,53 @@
+ax310 -- a userspace driver and interface for the AVerMedia Live Streamer AX310
+Copyright 2026 Christian Parpart
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+
+This project is not affiliated with, endorsed by, or sponsored by AVerMedia
+Technologies, Inc. "AVerMedia", "Live Streamer" and "AX310" are used only to say
+which hardware this software talks to. No vendor firmware, driver, software or
+other material is included or redistributed here.
+
+The protocol was worked out by observing USB traffic between the vendor's own
+software and the device -- black-box observation of an interface, for the sole
+purpose of interoperating with hardware its owner already bought. The register
+addresses and byte layouts recorded in this repository are facts about that
+interface.
+
+--------------------------------------------------------------------------------
+
+Third-party components, and the terms this project takes them under:
+
+  hidapi                    BSD-style (LICENSE-bsd.txt)
+                            https://github.com/libusb/hidapi
+                            hidapi offers a choice of GPL-3.0, a BSD-style
+                            licence, or the original HIDAPI licence. This project
+                            takes the BSD-style one; a packager does not have to
+                            guess.
+
+  Qt 6                      LGPL-3.0-only
+                            https://www.qt.io/
+                            Linked dynamically, so it can be relinked against a
+                            different Qt, which is what LGPL-3.0 asks for.
+
+  Catch2                    BSL-1.0
+                            https://github.com/catchorg/Catch2
+                            Test-only; not linked into anything installed.
+
+  CPM.cmake                 MIT
+                            https://github.com/cpm-cmake/CPM.cmake
+                            Downloaded at configure time by cmake/CPM.cmake,
+                            which is this project's own wrapper.
+
+Bundled typefaces, compiled into the binary as Qt resources. Both are under the
+SIL Open Font License 1.1, whose text ships beside them in src/gui/fonts/ and is
+installed with the package:
+
+  Barlow Condensed          OFL-1.1  src/gui/fonts/OFL-BarlowCondensed.txt
+  JetBrains Mono Nerd Font  OFL-1.1  src/gui/fonts/OFL-JetBrainsMono.txt
+
+The JetBrains Mono files here are subsets: the Latin set and the six icons the
+interface draws are kept, and several thousand glyphs for tools this project will
+never mention are dropped.

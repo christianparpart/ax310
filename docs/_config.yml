@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+title: AX310
+tagline: A Linux driver and interface for the AVerMedia Live Streamer AX310
+description: >-
+  A C++23 userspace driver and Qt/QML interface for the AVerMedia Live Streamer
+  AX310 audio control deck, reverse-engineered from its USB traffic.
+url: https://christianparpart.github.io
+baseurl: /ax310
+
+# Rendered with kramdown, which is what GitHub Pages runs anyway. Tables are the
+# whole of the wire specification, so they are not optional.
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  hard_wrap: false
+
+# The internal list of what is next is working notes rather than documentation,
+# and it reads as a promise once it is on a website.
+exclude:
+  - todo.md

@@ -1,0 +1,1316 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <numeric>
+#include <span>
+#include <vector>
+
+#include <Printers.hpp>
+#include <ReportBuilder.hpp>
+#include <ax310/Commands.hpp>
+#include <ax310/Device.hpp>
+#include <ax310/FakeHidTransport.hpp>
+
+using namespace ax310;
+using namespace std::chrono_literals;
+using ax310::testing::ReportBuilder;
+
+namespace
+{
+
+/// The four collaborators plus the device, constructed together.
+///
+/// Device is neither copyable nor movable, so it has to be built in place; this
+/// is what lets a case say `Harness harness;` and get a wired-up driver.
+struct Harness
+{
+    FakeHidTransport transport;
+    ManualClock clock;
+    CapturingLogger logger;
+    RecordingListener listener;
+    Device device { transport, clock, logger, listener };
+
+    /// Puts a control-mode deck on the fake bus.
+    void presentControlDevice()
+    {
+        transport.presentDevice(protocol::descriptorFor(DeviceMode::Control).productId,
+                                { HidInterface { .path = "/dev/control", .interfaceNumber = 0 } });
+    }
+
+    /// Puts a base-mode deck on the fake bus, the state it enumerates in.
+    void presentBaseDevice()
+    {
+        transport.presentDevice(protocol::descriptorFor(DeviceMode::Base).productId,
+                                { HidInterface { .path = "/dev/base", .interfaceNumber = 4 } });
+    }
+
+    /// Brings the device up in control mode and clears what that produced, so a
+    /// case asserts on its own traffic rather than on the connect.
+    void connectInControlMode()
+    {
+        presentControlDevice();
+        auto const state = device.connect();
+        REQUIRE(state.has_value());
+        REQUIRE(*state == ConnectionState::Connected);
+        // Drops the initialisation traffic, so a case sees only its own.
+        transport.clearSent();
+        listener.clear();
+    }
+};
+
+/// @param frame The bytes to sum.
+/// @return The 16-bit unsigned sum the chunk header carries.
+std::uint16_t checksumOf(std::span<std::uint8_t const> frame)
+{
+    std::uint16_t sum = 0;
+    for (auto const byte: frame)
+        sum = static_cast<std::uint16_t>(sum + byte);
+    return sum;
+}
+
+/// @param size How many bytes.
+/// @return A frame whose bytes vary, so a chunking bug shows up as wrong content
+///         rather than as an identical-looking block.
+std::vector<std::uint8_t> makeFrame(std::size_t size)
+{
+    std::vector<std::uint8_t> frame(size);
+    std::ranges::iota(frame, std::uint8_t { 1 });
+    return frame;
+}
+
+} // namespace
+
+// --- connect -------------------------------------------------------------
+
+TEST_CASE("connect reports DeviceNotFound when the bus is empty", "[device][connect]")
+{
+    Harness harness;
+
+    auto const result = harness.device.connect();
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::DeviceNotFound);
+    CHECK(harness.device.connectionState() == ConnectionState::Disconnected);
+    CHECK(harness.listener.empty());
+}
+
+TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    auto const result = harness.device.connect();
+
+    REQUIRE(result.has_value());
+    CHECK(*result == ConnectionState::Connected);
+    CHECK(harness.device.isConnected());
+    CHECK(harness.transport.openedPath() == "/dev/control");
+
+    REQUIRE(harness.listener.count<ConnectionChanged>() == 1);
+    CHECK(harness.listener.nth<ConnectionChanged>().state == ConnectionState::Connected);
+
+    // The deck comes up asleep every time, so the sequence goes out on every
+    // attach rather than only when some "needs init" state is detected. Ahead of
+    // it goes one read per register the sequence is about to overwrite; this fake
+    // answers none of them, so nothing is written back.
+    CHECK(harness.transport.sentCount(FakeHidTransport::Channel::FeatureReport)
+          == protocol::PreservedAddresses.size() + commands::InitPayloads.size());
+    CHECK(harness.transport.featureReadCount() == protocol::PreservedAddresses.size());
+    CHECK(harness.clock.totalSlept() == 10ms * commands::InitPayloads.size());
+}
+
+TEST_CASE("connect goes straight to the deck's own device", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    harness.presentBaseDevice();
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // Base is a second USB device of the same unit, carrying the audio side's
+    // media keys. Both are on the bus at once and only Control is ours, so the
+    // other one is never even enumerated.
+    REQUIRE(harness.transport.probes().size() == 1);
+    CHECK(harness.transport.probes().front().second
+          == protocol::descriptorFor(DeviceMode::Control).productId);
+}
+
+TEST_CASE("a deck that will not take its initialisation is not reported as connected", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    // Counted past the snapshot reads, so the failure lands where this case says
+    // it does: partway through the initialisation itself.
+    harness.transport.failSendAfter(DeviceError::WriteFailed, protocol::PreservedAddresses.size() + 3);
+
+    auto const result = harness.device.connect();
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::WriteFailed);
+
+    // Reporting Connected here is what the driver used to do, and it left the
+    // app polling a deck that was never woken: dark screen, no reports, no error.
+    CHECK(harness.device.connectionState() != ConnectionState::Connected);
+    CHECK(harness.listener.count<ConnectionChanged>() == 0);
+}
+
+TEST_CASE("connect sends the init payloads framed with a report-id byte", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The snapshot reads go out first, so the init payloads start after them.
+    auto const first = protocol::PreservedAddresses.size();
+    REQUIRE(harness.transport.sent().size() == first + commands::InitPayloads.size());
+    for (std::size_t index = 0; index < commands::InitPayloads.size(); ++index)
+    {
+        INFO("init payload " << index);
+        auto const& sent = harness.transport.sent()[first + index].bytes;
+
+        // 65 bytes, not 64: the interface declares no report IDs, so hidapi's
+        // leading byte is 0x00. Sending the bare 64 made hidapi read 0x81 as a
+        // report id, and every payload was rejected.
+        REQUIRE(sent.size() == protocol::FeatureReportSize);
+        CHECK(sent.front() == 0x00);
+        CHECK(std::ranges::equal(std::span { sent }.subspan(1), commands::InitPayloads[index]));
+    }
+}
+
+TEST_CASE("connect surfaces a transport that will not initialise", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    harness.transport.failInitialize(DeviceError::HidInitFailed);
+
+    auto const result = harness.device.connect();
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::HidInitFailed);
+}
+
+TEST_CASE("connect reports OpenFailed when the deck is present but will not open", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    harness.transport.failOpen(DeviceError::OpenFailed);
+
+    auto const result = harness.device.connect();
+
+    REQUIRE_FALSE(result.has_value());
+
+    // Found-but-unopenable is a different problem from absent -- usually a
+    // permissions one -- and the caller can only say so if we distinguish them.
+    CHECK(result.error() == DeviceError::OpenFailed);
+}
+
+TEST_CASE("connect accepts an interface whose number the backend does not report", "[device][connect]")
+{
+    Harness harness;
+
+    // macOS and Windows backends report -1 rather than a USB interface number.
+    harness.transport.presentDevice(protocol::descriptorFor(DeviceMode::Control).productId,
+                                    { HidInterface { .path = "/dev/unnumbered", .interfaceNumber = -1 } });
+
+    auto const result = harness.device.connect();
+
+    REQUIRE(result.has_value());
+    CHECK(*result == ConnectionState::Connected);
+    CHECK(harness.transport.openedPath() == "/dev/unnumbered");
+}
+
+TEST_CASE("connect skips interfaces that are not the one carrying the protocol", "[device][connect]")
+{
+    Harness harness;
+    harness.transport.presentDevice(protocol::descriptorFor(DeviceMode::Control).productId,
+                                    {
+                                        HidInterface { .path = "/dev/audio", .interfaceNumber = 2 },
+                                        HidInterface { .path = "/dev/control", .interfaceNumber = 0 },
+                                    });
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The deck is a composite device; opening its audio interface would succeed
+    // and then never produce a report.
+    CHECK(harness.transport.openedPath() == "/dev/control");
+}
+
+TEST_CASE("connect on an already connected device is a no-op", "[device][connect]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    auto const result = harness.device.connect();
+
+    REQUIRE(result.has_value());
+    CHECK(*result == ConnectionState::Connected);
+    CHECK(harness.listener.empty()); // No second announcement.
+}
+
+// --- disconnect ----------------------------------------------------------
+
+TEST_CASE("disconnect sends the shutdown sequence and announces the change", "[device][disconnect]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.device.disconnect();
+
+    CHECK(harness.transport.sent().size() == commands::ShutdownPayloads.size());
+    CHECK(harness.device.connectionState() == ConnectionState::Disconnected);
+    CHECK_FALSE(harness.transport.isOpen());
+
+    REQUIRE(harness.listener.count<ConnectionChanged>() == 1);
+    CHECK(harness.listener.nth<ConnectionChanged>().state == ConnectionState::Disconnected);
+}
+
+TEST_CASE("disconnect without a connection sends nothing", "[device][disconnect]")
+{
+    Harness harness;
+
+    harness.device.disconnect();
+
+    CHECK(harness.transport.sent().empty());
+    CHECK(harness.listener.empty());
+}
+
+// --- poll ----------------------------------------------------------------
+
+TEST_CASE("poll refuses when the device is not connected", "[device][poll]")
+{
+    Harness harness;
+
+    auto const result = harness.device.poll(100ms);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::NotConnected);
+}
+
+TEST_CASE("poll passes its timeout through to the transport", "[device][poll]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueTimeout();
+
+    REQUIRE(harness.device.poll(250ms).has_value());
+
+    CHECK(harness.transport.lastReadTimeout() == 250ms);
+}
+
+TEST_CASE("poll treats a timeout as an idle deck, not an error", "[device][poll]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueTimeout();
+
+    auto const result = harness.device.poll(100ms);
+
+    REQUIRE(result.has_value());
+    CHECK(harness.listener.empty());
+}
+
+TEST_CASE("poll surfaces a read failure", "[device][poll]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.failRead(DeviceError::ReadFailed);
+
+    auto const result = harness.device.poll(100ms);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::ReadFailed);
+}
+
+TEST_CASE("poll ignores a report of a size it cannot interpret", "[device][poll]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(std::vector<std::uint8_t>(17, 0xAB));
+
+    auto const result = harness.device.poll(100ms);
+
+    // Not an error -- a stray report is not a broken device -- but nothing may be
+    // decoded out of bytes we do not understand.
+    REQUIRE(result.has_value());
+    CHECK(harness.listener.empty());
+    CHECK(harness.logger.contains(LogLevel::Warning, "Unexpected HID report size"));
+}
+
+TEST_CASE("poll strips the report-id byte some backends prepend", "[device][poll]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // Seed, then press a button, both delivered in the 65-byte form.
+    harness.transport.queueRead(ReportBuilder {}.buildWithReportId());
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x08).buildWithReportId());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // If the leading byte were not stripped, offset 0 would read as 0x00 and no
+    // button would ever be seen.
+    REQUIRE(harness.listener.count<ButtonPressed>() == 1);
+    CHECK(harness.listener.nth<ButtonPressed>().button == Button::TopLeft);
+}
+
+TEST_CASE("the first report is adopted as the starting position, not reported as a change", "[device][poll]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // A deck whose knobs are already turned and touched when we arrive.
+    harness.transport.queueRead(
+        ReportBuilder {}.knobTouch(0x3F).knobValue(KnobId::Mic, 10).knobValue(KnobId::System, 20).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Without seeding, every knob would fire a volume change on the first report
+    // and the UI would jump on connect.
+    CHECK(harness.listener.count<KnobVolumeChanged>() == 0);
+    CHECK(harness.listener.count<KnobTouched>() == 0);
+}
+
+// --- decoding ------------------------------------------------------------
+
+TEST_CASE("a button bit decodes to the button's identity, not to its mask", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build()); // Seed (a real report, not filler).
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    auto const [bit, expected] = GENERATE(table<std::uint8_t, Button>({
+        { 0x08, Button::TopLeft },
+        { 0x04, Button::TopRight },
+        { 0x02, Button::BottomLeft },
+        { 0x01, Button::BottomRight },
+    }));
+
+    harness.transport.queueRead(ReportBuilder {}.buttons(bit).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ButtonPressed>() == 1);
+    CHECK(harness.listener.nth<ButtonPressed>().button == expected);
+}
+
+TEST_CASE("a button release produces nothing", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.build());
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x08).build());
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x00).build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Only the press: the deck has no release event and the driver does not
+    // invent one.
+    CHECK(harness.listener.count<ButtonPressed>() == 1);
+}
+
+TEST_CASE("holding one button and adding another reports only the new one", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.build());
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x08).build());
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x0C).build()); // TopLeft held, TopRight added.
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ButtonPressed>() == 2);
+    CHECK(harness.listener.nth<ButtonPressed>(0).button == Button::TopLeft);
+    CHECK(harness.listener.nth<ButtonPressed>(1).button == Button::TopRight);
+}
+
+TEST_CASE("a screen touch decodes its coordinates little-endian", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(700, 300, 0x1c).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Little-endian here, unlike the big-endian audio meters in the same report.
+    // Verified against the deck: 1367 touches all landed inside 800x480 read this
+    // way, and outside it read the other.
+    REQUIRE(harness.listener.count<ScreenTouched>() == 1);
+    auto const touch = harness.listener.nth<ScreenTouched>();
+    CHECK(touch.x == 700);
+    CHECK(touch.y == 300);
+    CHECK(touch.phase == TouchPhase::Pressed);
+}
+
+TEST_CASE("a finger held still is one press, not a press per report", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Measured on the deck: a 4.8-second hold sends 45 screen-touch reports, all
+    // carrying the same coordinate. The flags byte stays 0x00 throughout, which
+    // is why reading it as a contact flag made a stationary press invisible.
+    for (int step = 0; step < 5; ++step)
+        harness.transport.queueRead(ReportBuilder {}.screenTouch(549, 228, 0x00).build());
+
+    for (int step = 0; step < 5; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ScreenTouched>() == 1);
+    CHECK(harness.listener.nth<ScreenTouched>().phase == TouchPhase::Pressed);
+    CHECK(harness.listener.nth<ScreenTouched>().x == 549);
+}
+
+TEST_CASE("the lift is the moment touch reports stop", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(100, 100, 0x00).build());
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(120, 110, 0x48).build());
+    // An ordinary report: the deck has no release event, it simply stops sending
+    // touch reports.
+    harness.transport.queueRead(ReportBuilder {}.build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ScreenTouched>() == 3);
+    CHECK(harness.listener.nth<ScreenTouched>(0).phase == TouchPhase::Pressed);
+    CHECK(harness.listener.nth<ScreenTouched>(1).phase == TouchPhase::Moved);
+
+    auto const release = harness.listener.nth<ScreenTouched>(2);
+    CHECK(release.phase == TouchPhase::Released);
+    // Reported where the finger last was, not at the origin.
+    CHECK(release.x == 120);
+    CHECK(release.y == 110);
+}
+
+TEST_CASE("a two-finger gesture is still tracked", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Two fingers report one coordinate and leave the flags byte at zero for the
+    // whole gesture, so reading that byte as contact dropped two-finger input
+    // entirely. The report type is what says a finger is down.
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(217, 305, 0x00).build());
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(229, 309, 0x00).build());
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(571, 384, 0x00).build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ScreenTouched>() == 3);
+    CHECK(harness.listener.nth<ScreenTouched>(0).phase == TouchPhase::Pressed);
+    CHECK(harness.listener.nth<ScreenTouched>(1).phase == TouchPhase::Moved);
+    CHECK(harness.listener.nth<ScreenTouched>(2).phase == TouchPhase::Moved);
+    CHECK(harness.listener.nth<ScreenTouched>(2).x == 571);
+}
+
+TEST_CASE("no release is reported when nothing was touching", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.build());
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x08).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    CHECK(harness.listener.count<ScreenTouched>() == 0);
+}
+
+TEST_CASE("a screen touch is not also read as a button press", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Byte 0 is 0x10 for a touch, and the two events share those six bytes. A
+    // decoder that checked the buttons first would see bit 0x10 set -- outside
+    // the physical-button mask, but only because that mask is applied.
+    harness.transport.queueRead(ReportBuilder {}.screenTouch(400, 240, 0x1c).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    CHECK(harness.listener.count<ScreenTouched>() == 1);
+    CHECK(harness.listener.count<ButtonPressed>() == 0);
+}
+
+TEST_CASE("a knob push fires on the press only", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.build());
+    harness.transport.queueRead(ReportBuilder {}.knobPush(0x04).build()); // Knob3 down.
+    harness.transport.queueRead(ReportBuilder {}.knobPush(0x00).build()); // Released.
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<KnobPushed>() == 1);
+    CHECK(harness.listener.nth<KnobPushed>().knob == KnobId::Console);
+}
+
+TEST_CASE("a knob touch fires on both edges", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x02).build()); // Knob2 touched.
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x00).build()); // Let go.
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Unlike a push, a touch has a meaningful "no longer" -- the UI dims the ring.
+    REQUIRE(harness.listener.count<KnobTouched>() == 2);
+    CHECK(harness.listener.nth<KnobTouched>(0).knob == KnobId::LineIn);
+    CHECK(harness.listener.nth<KnobTouched>(0).touch == Touch::Touched);
+    CHECK(harness.listener.nth<KnobTouched>(1).touch == Touch::Released);
+}
+
+TEST_CASE("a knob turn moves the volume by the number of steps turned", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 12).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // The reported byte is a counter, not a position, so two steps up is two
+    // steps from wherever the volume already was -- 50% by default.
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().knob == KnobId::Mic);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 60);
+}
+
+TEST_CASE("a knob counter that wraps past zero is one step, not a fall of 255", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 0xff).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 0x00).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 55);
+}
+
+TEST_CASE("turning a knob down lowers the volume", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 7).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 35);
+}
+
+TEST_CASE("the volume stops at the ends of its range", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 0).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 40).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 80).build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    // Two big turns up: the first saturates at 100, the second has nowhere left
+    // to go and must not be reported as a change at all.
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 100);
+}
+
+TEST_CASE("a knob that is not touched does not report a turn", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x00).knobValue(KnobId::Mic, 5).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x00).knobValue(KnobId::Mic, 15).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    CHECK(harness.listener.count<KnobVolumeChanged>() == 0);
+}
+
+TEST_CASE("the all-zero filler report is not decoded as anything", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
+    harness.transport.queueRead(ReportBuilder::filler());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 11).build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    // The deck interleaves an all-zero report between real ones. Decoding it
+    // would let the touched knob go and then take it up again on the next
+    // report, so the touch state must not move at all across the three.
+    CHECK(harness.listener.count<KnobTouched>() == 0);
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 55);
+}
+
+TEST_CASE("a knob counter that moves while untouched is absorbed, not reported", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 15).build());
+    // Untouched, and the counter has jumped -- as it does across a knob push or a
+    // button press, where it was seen going 0x0f -> 0x2f -> 0x4f.
+    harness.transport.queueRead(ReportBuilder {}.knobPush(0x01).knobValue(KnobId::Mic, 0x4f).build());
+    // Touched again: the jump must not now arrive as one enormous turn.
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 0x50).build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 55);
+}
+
+TEST_CASE("several knobs turning at once are each reported", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(
+        ReportBuilder {}.knobTouch(0x03).knobValue(KnobId::Mic, 5).knobValue(KnobId::LineIn, 5).build());
+    harness.transport.queueRead(
+        ReportBuilder {}.knobTouch(0x03).knobValue(KnobId::Mic, 6).knobValue(KnobId::LineIn, 3).build());
+
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 2);
+    CHECK(harness.listener.nth<KnobVolumeChanged>(0).knob == KnobId::Mic);
+    CHECK(harness.listener.nth<KnobVolumeChanged>(0).volume == 55);
+    CHECK(harness.listener.nth<KnobVolumeChanged>(1).knob == KnobId::LineIn);
+    CHECK(harness.listener.nth<KnobVolumeChanged>(1).volume == 40);
+}
+
+TEST_CASE("a report whose checksum does not match is dropped", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    auto corrupt = ReportBuilder {}.buttons(0x08).build();
+    corrupt.back() = static_cast<std::uint8_t>(corrupt.back() + 1); // One bit out.
+    harness.transport.queueRead(corrupt);
+
+    auto const result = harness.device.poll(100ms);
+
+    // Not an error -- one bad report is not a broken device -- but nothing may be
+    // decoded out of bytes that did not survive the wire intact.
+    REQUIRE(result.has_value());
+    CHECK(harness.listener.empty());
+    CHECK(harness.logger.contains(LogLevel::Warning, "checksum"));
+}
+
+TEST_CASE("the audio meters are decoded and reported", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // One per track, a stereo pair each. Confirmed with the vendor's per-track
+    // peak view enabled, a live microphone and music on System and nothing else
+    // connected: those two pairs moved and the other four sat at zero.
+    harness.transport.queueRead(ReportBuilder {}
+                                    .audioMeter(indexOf(KnobId::Mic), 0x7fff)
+                                    .audioMeter(indexOf(KnobId::System), 0x4000)
+                                    .build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<AudioMetersChanged>() == 1);
+    auto const meters = harness.listener.nth<AudioMetersChanged>().levels;
+    CHECK(meters[indexOf(KnobId::Mic)] == 100);
+    CHECK(meters[indexOf(KnobId::System)] == 50);
+    CHECK(meters[indexOf(KnobId::Console)] == 0);
+    CHECK(meters[indexOf(KnobId::Chat)] == 0);
+}
+
+TEST_CASE("unchanged meters are not re-sent at the report rate", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.audioMeter(0, 0x4000).build());
+    harness.transport.queueRead(ReportBuilder {}.audioMeter(0, 0x4000).build());
+    harness.transport.queueRead(ReportBuilder {}.audioMeter(0, 0x2000).build());
+
+    for (int step = 0; step < 3; ++step)
+        REQUIRE(harness.device.poll(100ms).has_value());
+
+    // The deck streams meters continuously; forwarding an identical set would
+    // wake the UI five times a second for nothing.
+    CHECK(harness.listener.count<AudioMetersChanged>() == 2);
+}
+
+// --- sendScreen ----------------------------------------------------------
+
+TEST_CASE("sendScreen refuses when the device is not connected", "[device][screen]")
+{
+    Harness harness;
+    auto const frame = makeFrame(100);
+
+    auto const result = harness.device.sendScreen(frame);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::NotConnected);
+}
+
+TEST_CASE("sendScreen packs a short frame into one chunk", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    auto const frame = makeFrame(100);
+
+    REQUIRE(harness.device.sendScreen(frame).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 1);
+    auto const& packet = harness.transport.sent().front().bytes;
+
+    // Always a full-size packet, whatever the payload: the deck reads a fixed
+    // report length and a short write is simply not delivered.
+    REQUIRE(packet.size() == protocol::ScreenChunkSize);
+    CHECK(packet[0] == 0x00); // Report id.
+    CHECK(packet[protocol::ScreenChunkSequenceOffset] == 0);
+
+    auto const length = static_cast<std::uint16_t>(packet[protocol::ScreenChunkLengthOffset]
+                                                   | (packet[protocol::ScreenChunkLengthOffset + 1] << 8));
+    CHECK(length == frame.size());
+
+    auto const checksum = static_cast<std::uint16_t>(
+        packet[protocol::ScreenChunkChecksumOffset] | (packet[protocol::ScreenChunkChecksumOffset + 1] << 8));
+    CHECK(checksum == checksumOf(frame));
+
+    auto const payload = std::span { packet }.subspan(protocol::ScreenChunkHeaderSize, frame.size());
+    CHECK(std::ranges::equal(frame, payload));
+}
+
+TEST_CASE("sendScreen splits a long frame and numbers the chunks", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    auto const frame = makeFrame((protocol::ScreenChunkPayloadSize * 2) + 500);
+    REQUIRE(harness.device.sendScreen(frame).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 3);
+
+    std::size_t offset = 0;
+    for (std::size_t index = 0; index < harness.transport.sent().size(); ++index)
+    {
+        INFO("chunk " << index);
+        auto const& packet = harness.transport.sent()[index].bytes;
+
+        REQUIRE(packet.size() == protocol::ScreenChunkSize);
+        CHECK(packet[protocol::ScreenChunkSequenceOffset] == index);
+
+        auto const expected = std::min(protocol::ScreenChunkPayloadSize, frame.size() - offset);
+        auto const length = static_cast<std::uint16_t>(
+            packet[protocol::ScreenChunkLengthOffset] | (packet[protocol::ScreenChunkLengthOffset + 1] << 8));
+        CHECK(length == expected);
+
+        auto const chunk = std::span { frame }.subspan(offset, expected);
+        auto const checksum =
+            static_cast<std::uint16_t>(packet[protocol::ScreenChunkChecksumOffset]
+                                       | (packet[protocol::ScreenChunkChecksumOffset + 1] << 8));
+        CHECK(checksum == checksumOf(chunk));
+        auto const payload = std::span { packet }.subspan(protocol::ScreenChunkHeaderSize, expected);
+        CHECK(std::ranges::equal(chunk, payload));
+
+        offset += expected;
+    }
+
+    CHECK(offset == frame.size()); // Every byte accounted for.
+}
+
+TEST_CASE("only the last chunk of a frame carries the end-of-frame marker", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    auto const frame = makeFrame((protocol::ScreenChunkPayloadSize * 2) + 100);
+    REQUIRE(harness.device.sendScreen(frame).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 3);
+    for (std::size_t index = 0; index < harness.transport.sent().size(); ++index)
+    {
+        INFO("chunk " << index);
+        auto const& packet = harness.transport.sent()[index].bytes;
+        auto const expected = index + 1 == harness.transport.sent().size() ? protocol::ScreenChunkFinalMarker
+                                                                           : std::uint8_t { 0x00 };
+
+        // Without this the deck accepts every chunk and never shows the frame:
+        // no error, no rendering, nothing to go on.
+        for (std::size_t byte = 0; byte < protocol::ScreenChunkFinalByteCount; ++byte)
+            CHECK(packet[protocol::ScreenChunkFinalOffset + byte] == expected);
+    }
+}
+
+TEST_CASE("a single-chunk frame is marked final on that one chunk", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.sendScreen(makeFrame(200)).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 1);
+    auto const& packet = harness.transport.sent().front().bytes;
+    CHECK(packet[protocol::ScreenChunkFinalOffset] == protocol::ScreenChunkFinalMarker);
+    CHECK(packet[protocol::ScreenChunkFinalOffset + 1] == protocol::ScreenChunkFinalMarker);
+}
+
+TEST_CASE("a frame that is an exact multiple of the chunk size sends no empty tail", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    auto const frame = makeFrame(protocol::ScreenChunkPayloadSize * 2);
+    REQUIRE(harness.device.sendScreen(frame).has_value());
+
+    // An off-by-one here would send a third chunk of zero bytes, which the deck
+    // answers by blanking the screen.
+    CHECK(harness.transport.sent().size() == 2);
+}
+
+TEST_CASE("sendScreen stops at the first failed chunk", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.failSendAfter(DeviceError::WriteFailed, 1);
+
+    auto const frame = makeFrame(protocol::ScreenChunkPayloadSize * 3);
+    auto const result = harness.device.sendScreen(frame);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::WriteFailed);
+
+    // Pushing the rest of a frame the deck is not reading stalls the queue behind
+    // it; one chunk out, then stop.
+    CHECK(harness.transport.sent().size() == 1);
+    CHECK(harness.logger.contains(LogLevel::Warning, "Screen chunk"));
+}
+
+TEST_CASE("a write after the deck is closed is refused rather than attempted", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.device.disconnect();
+    harness.transport.clearSent();
+
+    // The render timer hands frames to a thread pool, so a frame can arrive
+    // after the decision to disconnect. Writing to a closed descriptor produced
+    // a burst of "Bad file descriptor" at every shutdown.
+    auto const screen = harness.device.sendScreen(makeFrame(2000));
+    REQUIRE_FALSE(screen.has_value());
+    CHECK(screen.error() == DeviceError::NotConnected);
+
+    auto const level = harness.device.setLevel(MixId::Creator, KnobId::Mic, Level::fromPercent(50));
+    REQUIRE_FALSE(level.has_value());
+    CHECK(level.error() == DeviceError::NotConnected);
+
+    auto const brightness = harness.device.setKnobLedBrightness(50);
+    REQUIRE_FALSE(brightness.has_value());
+    CHECK(brightness.error() == DeviceError::NotConnected);
+
+    CHECK(harness.transport.sent().empty());
+}
+
+TEST_CASE("a frame stops at the chunk where the deck closes", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // Closing part-way through a multi-chunk frame is exactly what disconnect()
+    // does to a frame already in flight.
+    harness.transport.closeAfterWrites(2);
+
+    auto const result = harness.device.sendScreen(makeFrame(protocol::ScreenChunkPayloadSize * 5));
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::NotConnected);
+    CHECK(harness.transport.sentCount(FakeHidTransport::Channel::Write) == 2);
+}
+
+// --- levels --------------------------------------------------------------
+
+TEST_CASE("setKnobLedBrightness writes the LED brightness property", "[device][led]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setKnobLedBrightness(100).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 1);
+    auto const& sent = harness.transport.sent().front().bytes;
+
+    // Framed for the wire, so the command starts after the report-id byte.
+    REQUIRE(sent.size() == protocol::FeatureReportSize);
+    CHECK(sent[0] == 0x00);
+    CHECK(sent[1] == static_cast<std::uint8_t>(protocol::CommandKind::Set));
+    CHECK(sent[2] == protocol::PropertyGroup);
+    CHECK(sent[3] == static_cast<std::uint8_t>(protocol::Property::KnobLedBrightness));
+    CHECK(sent[4] == 1);
+    CHECK(sent[5] == protocol::KnobLedBrightnessAtStartup);
+}
+
+TEST_CASE("setKnobLedBrightness refuses when the device is not connected", "[device][led]")
+{
+    Harness harness;
+
+    auto const result = harness.device.setKnobLedBrightness(50);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::NotConnected);
+}
+
+TEST_CASE("connect puts back the settings the handshake overwrites", "[device][connect][preserve]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // Answer every snapshot read with a value that is deliberately not what the
+    // init sequence writes, so a restore is distinguishable from doing nothing.
+    constexpr std::uint8_t Marker = 0x13;
+    for (auto const& preserved: protocol::PreservedAddresses)
+    {
+        std::vector<std::uint8_t> reply { 0x00,
+                                          static_cast<std::uint8_t>(protocol::CommandKind::Get),
+                                          protocol::PropertyGroup,
+                                          preserved.address,
+                                          preserved.length };
+        reply.insert(reply.end(), preserved.length, Marker);
+        harness.transport.queueFeatureReport(std::move(reply));
+    }
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // One read, then the sequence, then one write back per register.
+    auto const preserved = protocol::PreservedAddresses.size();
+    REQUIRE(harness.transport.sent().size() == preserved + commands::InitPayloads.size() + preserved);
+
+    for (std::size_t index = 0; index < preserved; ++index)
+    {
+        INFO("restored register " << index);
+        auto const& entry = protocol::PreservedAddresses[index];
+        auto const& sent = harness.transport.sent()[preserved + commands::InitPayloads.size() + index].bytes;
+
+        REQUIRE(sent.size() == protocol::FeatureReportSize);
+        CHECK(sent[1] == static_cast<std::uint8_t>(protocol::CommandKind::Set));
+        CHECK(sent[2] == protocol::PropertyGroup);
+        CHECK(sent[3] == entry.address);
+        CHECK(sent[4] == entry.length);
+        for (std::size_t byte = 0; byte < entry.length; ++byte)
+            CHECK(sent[5 + byte] == Marker);
+    }
+}
+
+TEST_CASE("a register that answers nothing is not written back", "[device][connect][preserve]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // A cold deck answers no reads at all. Writing a register back from a reply
+    // that never arrived would put zeroes into it, which is worse than leaving
+    // the handshake's own value there.
+    REQUIRE(harness.device.connect().has_value());
+
+    CHECK(harness.transport.sent().size()
+          == protocol::PreservedAddresses.size() + commands::InitPayloads.size());
+}
+
+TEST_CASE("a reply for the wrong address is refused", "[device][preserve]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    REQUIRE(harness.device.connect().has_value());
+    harness.transport.clearSent();
+
+    // The deck leaves the previous answer in its reply buffer, so a reply that
+    // does not echo the address asked for is the remains of an earlier read.
+    harness.transport.queueFeatureReport({ 0x00,
+                                           static_cast<std::uint8_t>(protocol::CommandKind::Get),
+                                           protocol::PropertyGroup,
+                                           0x27,
+                                           0x01,
+                                           0x42 });
+
+    std::array<std::uint8_t, 1> values {};
+    auto const read = harness.device.readProperty(0x1e, values);
+
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == DeviceError::ReadFailed);
+}
+
+TEST_CASE("a property read returns what the deck echoed back", "[device][preserve]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    REQUIRE(harness.device.connect().has_value());
+
+    harness.transport.queueFeatureReport({ 0x00,
+                                           static_cast<std::uint8_t>(protocol::CommandKind::Get),
+                                           protocol::PropertyGroup,
+                                           0x27,
+                                           0x06,
+                                           0x14,
+                                           0x0a,
+                                           0x0a,
+                                           0x0a,
+                                           0x0a,
+                                           0x14 });
+
+    std::array<std::uint8_t, 6> values {};
+    REQUIRE(harness.device.readProperty(0x27, values).has_value());
+
+    CHECK(values == std::array<std::uint8_t, 6> { 0x14, 0x0a, 0x0a, 0x0a, 0x0a, 0x14 });
+}
+
+TEST_CASE("a level is written to its own mix's block", "[device][level]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setLevel(MixId::Creator, KnobId::System, Level::fromPercent(50)).has_value());
+    REQUIRE(harness.device.setLevel(MixId::Audience, KnobId::System, Level::fromPercent(50)).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 2);
+    auto const& creator = harness.transport.sent()[0].bytes;
+    auto const& audience = harness.transport.sent()[1].bytes;
+
+    // Same track, same level, two different registers -- the mixes are separate
+    // and a level without a mix would have to guess which.
+    CHECK(creator[3] == 0x2a);
+    CHECK(audience[3] == 0x31);
+    CHECK(creator[4] == 0x01);
+
+    // Steps reach the wire, not percent: 50% is step 10.
+    CHECK(creator[5] == 10);
+    CHECK(audience[5] == 10);
+}
+
+TEST_CASE("every track resolves to its own register in both mixes", "[device][level]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    for (auto const knob: AllKnobs)
+        REQUIRE(harness.device.setLevel(MixId::Creator, knob, Level::fromSteps(3)).has_value());
+
+    REQUIRE(harness.transport.sent().size() == KnobCount);
+    for (std::size_t index = 0; index < KnobCount; ++index)
+    {
+        INFO("track " << index);
+        CHECK(harness.transport.sent()[index].bytes[3] == 0x27 + index);
+    }
+}
+
+TEST_CASE("a level reads back from the deck", "[device][level]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueFeatureReport({ 0x00,
+                                           static_cast<std::uint8_t>(protocol::CommandKind::Get),
+                                           protocol::PropertyGroup,
+                                           0x31,
+                                           0x01,
+                                           0x0e });
+
+    auto const level = harness.device.level(MixId::Audience, KnobId::System);
+    REQUIRE(level.has_value());
+    CHECK(level->asPercent() == 70);
+}
+
+TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
+
+    // The vendor brackets a mode change and leaves a level drag unbracketed;
+    // this follows that, so the deck sees the shape it expects.
+    REQUIRE(harness.transport.sent().size() == 3);
+    CHECK(harness.transport.sent()[0].bytes[3] == 0x1d);
+    CHECK(harness.transport.sent()[0].bytes[5] == 0x01);
+    CHECK(harness.transport.sent()[1].bytes[3] == 0x15);
+    CHECK(harness.transport.sent()[1].bytes[5] == 0x01);
+    CHECK(harness.transport.sent()[2].bytes[3] == 0x1d);
+    CHECK(harness.transport.sent()[2].bytes[5] == 0x00);
+}
+
+TEST_CASE("a dangerous address is refused before anything is sent", "[device][safety]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    std::array<std::uint8_t, 1> const values { 0x01 };
+    auto const written = harness.device.writeProperty(protocol::DangerousAddresses.front(), values);
+
+    // 0x01 to 0x16 once wedged the deck into needing a power cycle. Nothing
+    // should reach the bus, and the refusal should say so rather than fail mutely.
+    REQUIRE_FALSE(written.has_value());
+    CHECK(written.error() == DeviceError::WriteFailed);
+    CHECK(harness.transport.sent().empty());
+    CHECK(harness.logger.contains(LogLevel::Error, "power cycle"));
+}
+
+TEST_CASE("a parameter is written into its command's body at its own offset", "[device][parameter]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setParameter(protocol::Parameter::CompressorThreshold, -26).has_value());
+
+    REQUIRE(harness.transport.sent().size() == 1);
+    auto const& sent = harness.transport.sent().front().bytes;
+    CHECK(sent[1] == protocol::FramedCommandMarker);
+    CHECK(sent[4] == static_cast<std::uint8_t>(protocol::FramedCommand::CompressorParameters));
+
+    // Body byte 9, captured from the vendor moving this exact slider. -26 dB is
+    // 0xe6 as a signed byte, which is what the deck was seen to receive.
+    CHECK(sent[5 + 9] == 0xe6);
+    CHECK(harness.device.parameter(protocol::Parameter::CompressorThreshold) == -26);
+}
+
+TEST_CASE("a parameter leaves the rest of its command's body alone", "[device][parameter]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setParameter(protocol::Parameter::CompressorRatio, 16).has_value());
+
+    auto const& sent = harness.transport.sent().front().bytes;
+    auto const& reference = protocol::FramedDefaults[1].body;
+
+    // Only the ratio moves. The rest of the body must survive intact, because
+    // the deck cannot be read back and a zeroed field would be silent damage.
+    for (std::size_t index = 0; index < protocol::FramedDefaults[1].length; ++index)
+    {
+        INFO("body byte " << index);
+        CHECK(sent[5 + index] == (index == 11 ? 16 : reference[index]));
+    }
+}
+
+TEST_CASE("a sixteen-bit parameter is written little-endian", "[device][parameter]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setParameter(protocol::Parameter::ReverbRoomSize, 625).has_value());
+
+    auto const& sent = harness.transport.sent().front().bytes;
+    CHECK(sent[5 + 18] == 0x71);
+    CHECK(sent[5 + 19] == 0x02);
+    CHECK(harness.device.parameter(protocol::Parameter::ReverbRoomSize) == 625);
+}
+
+TEST_CASE("a parameter clamps to its documented range", "[device][parameter]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setParameter(protocol::Parameter::CompressorThreshold, 40).has_value());
+    CHECK(harness.device.parameter(protocol::Parameter::CompressorThreshold) == 0);
+
+    REQUIRE(harness.device.setParameter(protocol::Parameter::CompressorThreshold, -900).has_value());
+    CHECK(harness.device.parameter(protocol::Parameter::CompressorThreshold) == -60);
+}
+
+TEST_CASE("an unwritten parameter reports the vendor default", "[device][parameter]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // The cache is seeded from the same bodies connect() sends, so before any
+    // edit it already agrees with the device. init[30] carries -18 dB and 12:1.
+    CHECK(harness.device.parameter(protocol::Parameter::CompressorThreshold) == -18);
+    CHECK(harness.device.parameter(protocol::Parameter::CompressorRatio) == 12);
+}
+
+TEST_CASE("a framed command carries the checksum the deck verifies", "[device][parameter]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setParameter(protocol::Parameter::ReverbLevel, 200).has_value());
+
+    auto const& sent = harness.transport.sent().front().bytes;
+    auto const length = sent[3];
+
+    // Same rule as every captured command: the low byte of everything from the
+    // length up to, but not including, the checksum itself.
+    unsigned sum = 0;
+    for (std::size_t index = 3; index + 1 < std::size_t { length } + 1; ++index)
+        sum += sent[index];
+
+    CHECK(sent[length] == static_cast<std::uint8_t>(sum & 0xFF));
+}
+
+TEST_CASE("setting a level refuses when the deck is not connected", "[device][level]")
+{
+    Harness harness;
+
+    auto const result = harness.device.setLevel(MixId::Creator, KnobId::Mic, Level::fromPercent(50));
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == DeviceError::NotConnected);
+    CHECK(harness.transport.sent().empty());
+}
+
+TEST_CASE("a level asked for between steps lands on the nearest one", "[device][level]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // 23% is not reachable on a 21-step control. It rounds to 25%, which is step
+    // 5 -- where the retired setKnobVolume truncated it down to step 4.
+    REQUIRE(harness.device.setLevel(MixId::Creator, KnobId::Game, Level::fromPercent(23)).has_value());
+
+    CHECK(harness.transport.sent().front().bytes[5] == 5);
+}

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# AVerMedia Live Streamer AX310: let the person sitting at the machine talk to it.
+#
+# The deck presents two USB devices. 07ca:0310 is the audio interface, which the
+# kernel also exposes as a hidraw node -- that node is the control channel this
+# driver uses. 07ca:1310 is the deck in its other mode. Both are matched, on the
+# USB device and on the hidraw node, because a rule on one does not reach the
+# other.
+#
+# TAG+="uaccess" rather than MODE="0666". logind then puts an ACL on the node for
+# whoever is logged in at the seat, and takes it away when they log out; 0666
+# would hand the deck -- including its microphone -- to every account on the
+# machine and to anything running as nobody. The number has to sort before
+# systemd's 73-seat-late.rules, which is what acts on the tag.
+SUBSYSTEM=="usb", ATTR{idVendor}=="07ca", ATTR{idProduct}=="0310", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="07ca", ATTR{idProduct}=="1310", TAG+="uaccess"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="07ca", ATTRS{idProduct}=="0310", TAG+="uaccess"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="07ca", ATTRS{idProduct}=="1310", TAG+="uaccess"

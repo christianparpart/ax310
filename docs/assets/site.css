@@ -1,0 +1,209 @@
+/* SPDX-License-Identifier: Apache-2.0
+ *
+ * The palette is not chosen here. Every value below is the one src/gui/Theme.qml
+ * gives the interface, so the site and the instrument are the same object seen
+ * twice. Blue and orange in particular are information rather than decoration:
+ * they are the colours the deck's own LED rings glow for the creator and
+ * audience mixes.
+ *
+ * Committed to dark, deliberately. The deck is a dark instrument read at arm's
+ * length in a dim room, and its interface is tested for staying dark enough to
+ * be. A light variant would be a different product's website. Every colour is
+ * painted explicitly so the page holds whatever ground the browser puts behind
+ * it. */
+
+:root {
+  --ground:   #0E1113;
+  --chassis:  #171B1E;
+  --rule:     #262C30;
+  --ink:      #E6EAEC;
+  --ink-dim:  #7E888E;
+  --creator:  #2FA8FF;
+  --audience: #FF9130;
+  --clip:     #FF4D5A;
+
+  --legend: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --data: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--data);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ── the bar ─────────────────────────────────────────────────────────── */
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 28px;
+  padding: 18px 24px;
+  background: var(--chassis);
+  border-bottom: 2px solid var(--creator);
+}
+
+.wordmark {
+  font-family: var(--legend);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.bar nav { display: flex; flex-wrap: wrap; gap: 22px; }
+
+.bar nav a {
+  font-family: var(--legend);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  padding-bottom: 2px;
+}
+
+.bar nav a:hover,
+.bar nav a:focus-visible { color: var(--ink); border-bottom-color: var(--creator); }
+
+/* ── the standing warning ────────────────────────────────────────────── */
+
+.alpha {
+  max-width: 74ch;
+  margin: 24px auto 0;
+  padding: 14px 18px;
+  background: var(--chassis);
+  border-left: 3px solid var(--clip);
+  color: var(--ink-dim);
+  font-size: 14px;
+}
+
+.alpha strong {
+  color: var(--clip);
+  font-family: var(--legend);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* ── the page ────────────────────────────────────────────────────────── */
+
+main {
+  max-width: 74ch;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+}
+
+h1, h2, h3 {
+  font-family: var(--legend);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  text-wrap: balance;
+  margin: 2.2em 0 0.6em;
+}
+
+h1 { font-size: 38px; letter-spacing: 0.09em; text-transform: uppercase; margin-top: 0; }
+h2 { font-size: 25px; color: var(--ink); padding-top: 0.5em; border-top: 1px solid var(--rule); }
+h3 { font-size: 18px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.12em; }
+
+p, ul, ol { margin: 0 0 1.1em; }
+li { margin-bottom: 0.35em; }
+
+a { color: var(--creator); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--ink); }
+
+strong { color: var(--ink); }
+em { color: var(--ink); }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5em 0; }
+
+/* ── data ────────────────────────────────────────────────────────────── */
+
+code {
+  font-family: var(--data);
+  font-size: 0.9em;
+  background: var(--chassis);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--audience);
+}
+
+pre {
+  background: var(--chassis);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+
+pre code { background: none; border: 0; padding: 0; color: var(--ink); font-size: 13px; }
+
+/* The wire specification is mostly tables, several of them wider than a phone.
+   `display: block` is what lets a table scroll inside itself with no wrapper
+   element and no script, so the page body never scrolls sideways -- which is the
+   guarantee, and it holds with JavaScript off. */
+table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.4em;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--rule); }
+
+th {
+  font-family: var(--legend);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: var(--chassis);
+  white-space: nowrap;
+}
+
+tr:last-child td { border-bottom: 0; }
+td code { background: none; border: 0; padding: 0; }
+
+img { max-width: 100%; height: auto; border: 1px solid var(--rule); display: block; }
+
+blockquote {
+  margin: 0 0 1.2em;
+  padding: 2px 0 2px 18px;
+  border-left: 3px solid var(--audience);
+  color: var(--ink-dim);
+}
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding: 24px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+footer p { max-width: 74ch; margin: 0 auto; }
+
+:focus-visible { outline: 2px solid var(--creator); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

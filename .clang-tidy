@@ -1,0 +1,198 @@
+---
+# clang-tidy configuration for this project's own code, under src/.
+#
+# It lives at the repository root so every first-party tree resolves to it by
+# clang-tidy's parent-directory search, and so tools invoked from the root
+# (run-clang-tidy, IDEs) find a config at all instead of failing with "No checks
+# enabled". Vendored code under _deps/ is kept out of linting by CMake, which
+# clears CMAKE_CXX_CLANG_TIDY across the dependency fetch -- see the top-level
+# CMakeLists.txt. This is the only .clang-tidy in the tree, deliberately: one
+# style, one config, no module-local overrides to diverge from it.
+#
+# Every check below is a hard error, so a suppression is a real decision. A bare
+# `-some-check` with no rationale is indistinguishable from an accident, and every
+# entry in the list that follows carries the number of sites it actually silences
+# **in this project**, measured by running that check alone over every first-party
+# translation unit. If a number here is zero, delete the suppression instead of
+# keeping it.
+#
+# That measurement is worth repeating after a toolchain bump, and worth repeating
+# for a reason: this file arrived from another project, and for a long time it
+# justified its suppressions with that project's code -- a terminal emulator's
+# grid buffers, its VT dispatch switch, its pty read under a mutex, and site
+# counts in the thousands taken from a tree an order of magnitude larger. None of
+# it was true here. Re-measuring dropped 38 suppressions that silenced nothing at
+# all, and turned two more into four-line fixes.
+#
+# Suppressions, most-silenced first, with what each one actually covers here:
+#
+#   382  cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#    85  cppcoreguidelines-pro-bounds-constant-array-index
+#         The driver indexes fixed-size std::arrays by enumerator -- indexOf(knob),
+#         indexOf(mix) -- and reads reports at protocol constants. The index is a
+#         table position or a wire offset, both checked by static_assert or by the
+#         decoder's length guard, so a bounds-checked accessor moves the check to
+#         run time without adding one.
+#     2  cppcoreguidelines-pro-bounds-pointer-arithmetic -- argv, twice.
+#
+#   356  modernize-use-trailing-return-type -- house style is leading.
+#   354  misc-include-cleaner -- a real backlog, not a policy. Nothing pursues it
+#         yet; turning it on today would be 354 errors in one commit.
+#   278  readability-magic-numbers
+#   278  cppcoreguidelines-avoid-magic-numbers  (the same check, other name)
+#         Protocol offsets and interface geometry. The protocol's numbers are named
+#         in Protocol.hpp and the check cannot see that a literal at a call site is
+#         one of them.
+#   227  readability-braces-around-statements
+#     2  readability-inconsistent-ifelse-braces  (the same area)
+#         Brace style is settled by .clang-format.
+#    37  readability-identifier-length -- `i`, `x`, `y` are fine.
+#    24  portability-avoid-pragma-once -- `#pragma once` is the house include guard.
+#    15  misc-non-private-member-variables-in-classes
+#     0  cppcoreguidelines-non-private-member-variables-in-classes (same check, and
+#         off so that enabling one name does not silently re-enable the other)
+#         Test fixtures whose members the test bodies drive directly, and
+#         UsbmonCapture::Record, which is a wire record rather than a class.
+#    10  readability-implicit-bool-conversion -- all in HidApiTransport.cpp, where
+#         hidapi is a C API returning pointers and `if (device)` is its idiom.
+#     8  modernize-use-scoped-lock -- eight std::lock_guards over one mutex each.
+#         scoped_lock exists for the multi-mutex case, which does not occur here.
+#     8  bugprone-easily-swappable-parameters -- (mix, knob) and (x, y) pairs. The
+#         check flags the shape rather than a defect.
+#     4  bugprone-exception-escape -- three main()s and ~Device.
+#     4  cppcoreguidelines-owning-memory -- QCoreApplication::postEvent takes
+#         ownership of the QMouseEvent it is given; that is Qt's contract.
+#     2  readability-convert-member-functions-to-static -- trackNames() and
+#         parameters() are Q_PROPERTY getters. Making them static changes what QML
+#         binds to.
+#     1  bugprone-branch-clone -- two pcap magics that mean the same endianness.
+#         Merging them would hide that there are two.
+#     1  bugprone-unchecked-optional-access -- ILogger_test.cpp guards with
+#         REQUIRE(...has_value()), which the check cannot see through.
+#     1  cppcoreguidelines-avoid-non-const-global-variables -- a Qt message handler
+#         is a plain function pointer with nowhere to hang state.
+#     1  cppcoreguidelines-pro-type-reinterpret-cast -- QByteArray's char to the
+#         driver's std::uint8_t, at the one place Qt meets the wire.
+#     1  misc-multiple-inheritance -- `struct Overloaded: Ts...`, the visitor idiom.
+#     0  bugprone-chained-comparison -- the one entry kept without a number.
+#         CHECK(a == b) expands to `Catch::Decomposer() <= a == b`, a chained
+#         comparison by construction, so it fires on ordinary assertions depending
+#         on how Catch2 is included. A local sweep can measure zero and CI still
+#         fail, which is exactly what happened while measuring this list.
+
+Checks: >-
+  -*,
+  bugprone-*,
+  -bugprone-branch-clone,
+  -bugprone-chained-comparison,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-unchecked-optional-access,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-nullability.*,
+  clang-analyzer-optin.cplusplus.*,
+  clang-analyzer-optin.performance.*,
+  clang-analyzer-optin.portability.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*,
+  clang-diagnostic-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  misc-*,
+  -misc-include-cleaner,
+  -misc-multiple-inheritance,
+  -misc-non-private-member-variables-in-classes,
+  modernize-*,
+  -modernize-use-scoped-lock,
+  -modernize-use-trailing-return-type,
+  performance-*,
+  portability-*,
+  -portability-avoid-pragma-once,
+  readability-*,
+  -readability-braces-around-statements,
+  -readability-convert-member-functions-to-static,
+  -readability-identifier-length,
+  -readability-implicit-bool-conversion,
+  -readability-inconsistent-ifelse-braces,
+  -readability-magic-numbers,
+
+# Every enabled check is a hard error. Fix the cause rather than adding a NOLINT;
+# if a check is wrong often enough to need one, it belongs in the list above with
+# its count.
+WarningsAsErrors: '*'
+
+UseColor: true
+# Every first-party header, not only the two module directories. src/tools/ and
+# src/tests/ were outside this and so went unlinted entirely -- which is how
+# UsbmonCapture.hpp and ReportBuilder.hpp came to be the only headers nothing
+# checked.
+HeaderFilterRegex: 'src/(ax310|app|tools|tests)/'
+# Qt's AUTOMOC/AUTOUIC output lands under out/<preset>/src/<module>/..._autogen/,
+# whose path matches HeaderFilterRegex; it is generated code and not ours to lint.
+ExcludeHeaderFilterRegex: '.*_autogen/.*|.*\.moc$'
+FormatStyle: none
+
+CheckOptions:
+  cppcoreguidelines-explicit-virtual-functions.IgnoreDestructors: '1'
+  modernize-loop-convert.MaxCopySize: '16'
+  modernize-loop-convert.MinConfidence: reasonable
+  modernize-loop-convert.NamingStyle: CamelCase
+  modernize-pass-by-value.IncludeStyle: llvm
+  modernize-replace-auto-ptr.IncludeStyle: llvm
+  modernize-use-default-member-init.UseAssignment: '1'
+  modernize-use-nullptr.NullMacros: 'NULL'
+  # Pointer analysis proposes a const *pointee* where only the pointer itself could be
+  # const, which is a different guarantee and breaks callers that write through it.
+  misc-const-correctness.AnalyzePointers: 'false'
+  readability-function-cognitive-complexity.Threshold: '50'
+  readability-function-cognitive-complexity.IgnoreMacros: 'true'
+
+  # Identifier naming. Types are CamelCase, everything else camelBack, with a
+  # leading underscore on non-public data members. This block is what makes that
+  # rule enforceable rather than aspirational, so a category missing from it is a
+  # category nothing checks: functions, methods and type aliases went unchecked
+  # tree-wide until they were added here, and snake_case survived a whole-tree
+  # rename sweep with a clean build to prove it.
+  #
+  # The names the standard library binds to *by spelling* -- member typedefs
+  # (value_type, iterator, difference_type), container methods (begin,
+  # push_back), std::formatter/std::hash specializations -- cannot follow this
+  # rule and carry a NOLINT(readability-identifier-naming) with their reason at
+  # the declaration.
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.ClassConstantCase: CamelCase
+  readability-identifier-naming.ClassMemberCase: CamelCase
+  readability-identifier-naming.ClassMethodCase: camelBack
+  readability-identifier-naming.ConstantCase: camelBack
+  readability-identifier-naming.ConstantMemberCase: camelBack
+  readability-identifier-naming.ConstantMemberPrefix: '_'
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.FunctionCase: camelBack
+  readability-identifier-naming.MethodCase: camelBack
+  readability-identifier-naming.ParameterCase: camelBack
+  readability-identifier-naming.PrivateMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberPrefix: '_'
+  readability-identifier-naming.ProtectedMemberCase: camelBack
+  readability-identifier-naming.ProtectedMemberPrefix: '_'
+  readability-identifier-naming.PublicMemberCase: camelBack
+  readability-identifier-naming.ScopedEnumConstantCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TypeTemplateParameterCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.VariableCase: camelBack
+  readability-identifier-naming.GlobalVariableCase: camelBack
+  # No Hungarian notation: no g/s_/k prefixes. Globals are plain camelBack.

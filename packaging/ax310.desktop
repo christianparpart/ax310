@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+[Desktop Entry]
+Type=Application
+Name=AX310
+GenericName=Audio Mixer
+Comment=Mixer and effects for the AVerMedia Live Streamer AX310
+Exec=ax310_app
+Icon=audio-card
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=audio;mixer;stream;deck;AVerMedia;
