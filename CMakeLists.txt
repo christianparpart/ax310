@@ -18,6 +18,22 @@ if((CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (CMAKE_CXX_COMPILER_ID STREQUAL "
     set(CMAKE_CXX_FLAGS_DEBUG "-Og -g")
 endif()
 
+if(MSVC)
+    # /utf-8 is correctness here, not tidiness. Without it MSVC reads a source
+    # file with no BOM as the machine's active code page, so the em dashes, the
+    # multiplication sign and the ellipsis in SpecGen.cpp's string literals come
+    # out as different bytes -- and those bytes are the wire specification. The
+    # generated document would then differ from the committed one and the drift
+    # check would fail on Windows, reporting a document that is "out of date"
+    # when what is wrong is the compiler's idea of the alphabet.
+    add_compile_options(/utf-8)
+
+    # windows.h defines min and max as macros, which breaks any std::max in a
+    # header that sees it -- Protocol.hpp has one, in decodeReport. Qt usually
+    # defines this itself; relying on that is relying on an include order.
+    add_compile_definitions(NOMINMAX)
+endif()
+
 option(AX310_BUILD_TESTS "Build unit tests" ON)
 
 include(CTest)

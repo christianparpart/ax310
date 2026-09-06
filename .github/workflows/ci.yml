@@ -105,6 +105,14 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
+          # Do not raise this past 6.10 without checking aqtinstall first. Qt
+          # restructured its Windows package repository at 6.11 into
+          # per-architecture subdirectories where every release up to 6.10 kept a
+          # flat one, and aqtinstall still asks for the flat path -- so a 6.11
+          # install dies here with "Failed to locate XML data for Qt version".
+          # Linux is unaffected; its repository layout did not change. The same
+          # trap is documented in contour's build.yml, which is where this is
+          # known from.
           version: '6.8.*'
           modules: 'qtshadertools'
           cache: true
