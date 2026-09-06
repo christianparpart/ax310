@@ -152,7 +152,8 @@ captures name them.
   toggled fills the gap and the tile simply lights up.
 - **Turn the IPS panel off and on.** The vendor software blanks it after a period
   of inactivity, so there is a command for it and a capture of that setting being
-  toggled would find it. Worth having for its own sake — a deck left on a desk
+  toggled would find it. It is not simply stopping the frames: the deck holds the
+  last frame it was sent indefinitely. Worth having for its own sake — a deck left on a desk
   overnight should not be showing a bright panel — and it may be the same register
   as brightness.
 - **Screen brightness** — the register is still unidentified; `setScreenBrightness`

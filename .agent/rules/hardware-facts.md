@@ -211,17 +211,23 @@ now prints a line per contact saying how many reports, how many pixels and how
 many milliseconds in the value changed, which is what separates those two.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
-Whether they are the two-finger case is open; `Protocol.hpp` currently says two
-fingers produce no events at all, which one run appeared to contradict.
+They are **not** the two-finger case: the deck's owner reports the panel simply
+does not track more than one finger, which agrees with `Protocol.hpp`'s standing
+note that two-finger input produces no events at all. What they do mean is still
+open.
 
-## The panel sleeps on its own
+## The panel keeps the last frame indefinitely
 
-The screen turns itself off after a short time when no frames are sent, and
-**touch is not reported while it is off** -- a finger has to wake it first, which
-makes touch look intermittent when the driver is not pushing frames. Observed
-while probing the flags byte with no application running.
+Stop sending frames and the deck goes on showing the last one it received, for as
+long as you leave it. It does **not** blank on its own.
 
-That is worth knowing twice over. It explains touches that seem to go missing,
-and it bears on the unfound panel-power register: the vendor software blanks the
-screen after a period of inactivity, and it may be doing nothing more than
-stopping its frames.
+So stopping frames is not how the vendor software blanks the screen, and the
+panel-power register is still unfound. An earlier version of this entry said the
+opposite -- that the screen sleeps without frames -- which came from hardening a
+hedged observation ("seems to be", "at least when we don't send frames") into a
+fact within minutes of hearing it. The deck's owner then said plainly that the
+last frame persists. Twice in this project a guess has been written down as
+established and had to be taken back out; this is the second.
+
+Touch recognition **is** sometimes intermittent, and that part is real and
+unexplained. It is not the screen being off, because the screen is not off.

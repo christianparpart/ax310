@@ -76,3 +76,13 @@ pid=$(ss -lptn 'sport = :8787' | grep -oP 'pid=\K[0-9]+' | head -1)
 
 `pkill -x name` is safe where the process has a distinct executable name; `-f` is
 the dangerous one.
+
+**A hedged observation is not a finding, and the hedge is the load-bearing part.**
+The deck's owner said the screen "seems to" turn off, "at least when we don't send
+some JPEG frames" — and within minutes that was written into hardware-facts.md as
+"the screen turns itself off after a short time when no frames are sent", with a
+paragraph of consequences built on top. It was wrong: the last frame stays on the
+panel indefinitely. The hedge carried the actual information — that somebody was
+guessing at a cause for something they had noticed — and dropping it turned their
+guess into the project's fact. Quote the observation, or ask what settles it, but
+do not promote it while removing the words that said it was uncertain.
