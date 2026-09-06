@@ -375,11 +375,16 @@ slider at minimum sent `0x19` on the lit channel and at maximum `0xff`. `0x19` i
 
 so `FirstButtonSelector + index` lights the wrong two and the mapping is a table.
 
-One link is still assumed. These are the positions the *vendor's* grid gives them,
-and whether `Button`'s enumerators match the deck's physical layout has never been
-verified -- `ButtonBits` runs `0x08, 0x04, 0x02, 0x01`, reversed for no recorded
-reason. Pressing each button and watching which bit arrives would close it, and
-needs no VM.
+The colour path has since been driven on hardware with `ax310_probe --button` and
+the result accepted, so the selector table is confirmed **in the output
+direction**: naming a button lights that button.
+
+That says nothing about the input direction. `ButtonBits` runs `0x08, 0x04, 0x02,
+0x01` -- reversed against `Button`'s order, for no recorded reason -- and is a
+separate table that no test has touched. It is now easy to settle, though, and
+without a VM: light one button a colour the others do not have, press it, and see
+which bit arrives. The output mapping being confirmed is what makes that
+unambiguous, because it identifies the button being pressed.
 
 ## The knob rings' colour: the same 0xc0, with byte 0 choosing the bank
 
@@ -403,6 +408,8 @@ depends on it, so the driver does not replay it.
 Bytes 6 and 7 were `f8 00` in all four captures. That is not evidence of meaning:
 the button records carry `bc 1d`, `00 1d` and `00 00` in the same two bytes, so
 the pair is the same unexplained padding there as here.
+
+Driven on hardware with `ax310_probe --knob-colour`: the rings take the colour.
 
 ## The surround strip: 0xe0, ten bytes, six modes
 
@@ -437,6 +444,10 @@ a solid blue moved byte 4 from `0xf8` to `0x7d` *and* the blue channel from
 measured, a caller wanting a dimmer strip should scale the colour it passes
 rather than rely on byte 4. The lowest channel value seen is `0x19` -- the same
 floor the button colours have.
+
+All six modes have since been driven on hardware with `ax310_probe --surround`,
+along with `off`, so the mode table and the colour bytes are confirmed and not
+merely replayed.
 
 A note on how the first sweep read: the mode captures were taken at the vendor's
 default colour, which is blue, not the red the capture plan asked for. Reading

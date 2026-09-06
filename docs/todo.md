@@ -186,7 +186,14 @@ captures name them.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries
   no mix, so setting the audience mix's colour means selecting it, writing, and
   selecting back. Whether the deck keeps both colours or the driver must is
-  untested.
+  untested; the colour path itself is confirmed on hardware.
+- **`ButtonBits` is unverified** — `0x08, 0x04, 0x02, 0x01`, reversed against
+  `Button`'s order for no recorded reason. Now cheap to settle, and without a VM:
+  the colour path is confirmed, so lighting one button a unique colour identifies
+  which button a press came from. Wants a probe mode that prints the arriving bit.
+- **Nothing in the GUI reaches the lights** — button colours, ring colour and the
+  surround strip are all driven by hand through `ax310_probe`. They are the first
+  device features with no interface at all rather than a partial one.
 - ~~**`cmake/` carries another project's files.**~~ Done. Five unreachable
   modules removed, the sixth replaced, every surviving cross-reference rewritten,
   and one real defect found in the process: the CPM bootstrap's stall bound had
