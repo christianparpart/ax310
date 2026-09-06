@@ -45,6 +45,21 @@ int main(int argc, char* argv[])
         qputenv("QT_QPA_PLATFORM", "offscreen");
         qputenv("QT_QUICK_BACKEND", "software");
 
+#ifdef _WIN32
+        // The offscreen platform has no font database of its own and Qt no
+        // longer ships fonts, so on Windows it looks for a directory that a
+        // build tree does not have and warns that it found none -- meaning the
+        // rendering tests would be drawing text in nothing at all. This project
+        // bundles two typefaces already; pointing Qt at them is both the fix and
+        // an improvement, because it is the same text on both platforms.
+        //
+        // Windows only, deliberately: Linux reaches fontconfig and already has
+        // fonts, and changing which ones it picks would move every pixel
+        // threshold in this suite for no reason.
+        if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR"))
+            qputenv("QT_QPA_FONTDIR", AX310_BUNDLED_FONT_DIR);
+#endif
+
         // Deterministic frames: without this the renderer is free to skip or
         // coalesce updates, and a grab can catch a half-drawn scene.
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);

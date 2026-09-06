@@ -127,6 +127,11 @@ if(AX310_BUILD_TESTS)
         # one links Qt -- so without the directory holding Qt6Core.dll on the
         # search path the build fails at 0xc0000135, STATUS_DLL_NOT_FOUND, with
         # no output and nothing naming Qt. It is ignored where it is not needed.
+        # The fonts this project bundles, as a path the test binary can hand to
+        # Qt on a platform whose font database is otherwise empty.
+        target_compile_definitions(ax310_gui_test PRIVATE
+            AX310_BUNDLED_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/gui/fonts")
+
         ax310_place_runtime_dlls(ax310_gui_test)
         catch_discover_tests(ax310_gui_test
             PROPERTIES SKIP_RETURN_CODE 4

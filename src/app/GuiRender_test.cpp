@@ -10,30 +10,28 @@
 /// deck demands, it is not blank, its background is the colour it should be, and
 /// it changes when the device state changes.
 
-#include <ax310/FakeHidTransport.hpp>
-#include <ax310/IClock.hpp>
-#include <ax310/ILogger.hpp>
-#include <ax310/Protocol.hpp>
-
-#include <app/DeviceBridge.hpp>
-
 #include <catch2/catch_test_macros.hpp>
 
 #include <QColor>
 #include <QEventLoop>
-#include <QTimer>
 #include <QImage>
+#include <QMouseEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
-#include <QMouseEvent>
 #include <QQuickItem>
 #include <QQuickView>
 #include <QQuickWindow>
+#include <QTimer>
 #include <QUrl>
-
 #include <cstdlib>
 #include <map>
 #include <vector>
+
+#include <app/DeviceBridge.hpp>
+#include <ax310/FakeHidTransport.hpp>
+#include <ax310/IClock.hpp>
+#include <ax310/ILogger.hpp>
+#include <ax310/Protocol.hpp>
 
 using namespace ax310;
 
@@ -74,12 +72,10 @@ struct RenderHarness
     {
         for (auto const knob: AllKnobs)
         {
-            transport.setRegister(
-                protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
-                { static_cast<std::uint8_t>(creatorSteps[indexOf(knob)]) });
-            transport.setRegister(
-                protocol::levelAddressOf(protocol::Property::AudienceMixLevels, knob),
-                { static_cast<std::uint8_t>(audienceSteps[indexOf(knob)]) });
+            transport.setRegister(protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
+                                  { static_cast<std::uint8_t>(creatorSteps[indexOf(knob)]) });
+            transport.setRegister(protocol::levelAddressOf(protocol::Property::AudienceMixLevels, knob),
+                                  { static_cast<std::uint8_t>(audienceSteps[indexOf(knob)]) });
         }
 
         bridge.start();
@@ -328,9 +324,8 @@ TEST_CASE("levels appear when the deck connects after the view exists", "[gui][r
     RenderHarness harness;
 
     for (auto const knob: AllKnobs)
-        harness.transport.setRegister(
-            protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
-            { std::uint8_t { 20 } });
+        harness.transport.setRegister(protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
+                                      { std::uint8_t { 20 } });
 
     QQuickView view;
     view.setResizeMode(QQuickView::SizeRootObjectToView);
@@ -360,9 +355,8 @@ TEST_CASE("levels are shown when the deck connected before the view existed", "[
     RenderHarness harness;
 
     for (auto const knob: AllKnobs)
-        harness.transport.setRegister(
-            protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
-            { std::uint8_t { 20 } });
+        harness.transport.setRegister(protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
+                                      { std::uint8_t { 20 } });
 
     harness.bridge.start();
     RenderHarness::settle();
@@ -487,8 +481,7 @@ TEST_CASE("the panel keeps its arcs after the first frame", "[.native][gui][rend
     {
         auto const grab = view.grabWindow();
         REQUIRE_FALSE(grab.isNull());
-        sampled = static_cast<std::size_t>(grab.width() / 2)
-                  * static_cast<std::size_t>(grab.height() / 2);
+        sampled = static_cast<std::size_t>(grab.width() / 2) * static_cast<std::size_t>(grab.height() / 2);
         lit.push_back(pixelsNearHue(grab, hue));
         RenderHarness::settle(60);
     }
@@ -544,8 +537,8 @@ TEST_CASE("the effects page fits the panel and shows every parameter", "[gui][re
     // more than what it was given.
     auto* const page = view.rootObject()->findChild<QQuickItem*>("effectsPage");
     REQUIRE(page != nullptr);
-    UNSCOPED_INFO("the effects page wants " << page->implicitHeight() << " of "
-                                            << page->height() << " available");
+    UNSCOPED_INFO("the effects page wants " << page->implicitHeight() << " of " << page->height()
+                                            << " available");
     CHECK(page->implicitHeight() <= page->height());
     CHECK(page->height() > 0);
 }
@@ -593,18 +586,30 @@ TEST_CASE("a touch on the panel lands on the tile it looks like", "[gui][render]
     REQUIRE(view.status() == QQuickView::Ready);
     view.show();
 
+    // Sent rather than posted. A posted event waits for the event loop to reach
+    // it and for the window to be in a state that accepts it, and on Windows
+    // under the offscreen platform it never arrived -- the taps below all
+    // registered on Linux and none of them on Windows. Sending puts the question
+    // directly to the window's own event handler, which is the thing being
+    // asked about: whether a press at these coordinates finds this control.
+    //
+    // The application still posts, from a signal handler on the GUI thread. That
+    // is a different concern from hit testing and is not what this checks.
     auto const tap = [&view](int x, int y) {
         QPointF const at(x, y);
-        QCoreApplication::postEvent(
-            &view,
-            new QMouseEvent(
-                QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier));
-        QCoreApplication::postEvent(
-            &view,
-            new QMouseEvent(
-                QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier));
+        QMouseEvent press {
+            QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier
+        };
+        QMouseEvent release {
+            QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier
+        };
+        QCoreApplication::sendEvent(&view, &press);
+        QCoreApplication::sendEvent(&view, &release);
         RenderHarness::settle(120);
     };
+
+    UNSCOPED_INFO("view visible " << view.isVisible() << ", exposed " << view.isExposed() << ", root "
+                                  << (view.rootObject() != nullptr));
 
     constexpr int TileRow = 412;
 
@@ -677,14 +682,14 @@ TEST_CASE("the desktop's preview of the deck can be operated", "[gui][render][to
     auto const tapPanel = [&](int x, int y) {
         auto const at = preview->mapToScene(QPointF(x * factor, y * factor));
         UNSCOPED_INFO("panel " << x << "," << y << " -> window " << at.x() << "," << at.y());
-        QCoreApplication::postEvent(
-            window,
-            new QMouseEvent(
-                QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier));
-        QCoreApplication::postEvent(
-            window,
-            new QMouseEvent(
-                QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier));
+        QMouseEvent press {
+            QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier
+        };
+        QMouseEvent release {
+            QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton, Qt::NoModifier
+        };
+        QCoreApplication::sendEvent(window, &press);
+        QCoreApplication::sendEvent(window, &release);
         RenderHarness::settle(150);
     };
 
