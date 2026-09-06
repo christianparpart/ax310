@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <ax310/Types.hpp>
+
+#include <Printers.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <set>
 #include <string_view>
-
-#include <Printers.hpp>
-#include <ax310/Types.hpp>
 
 using namespace ax310;
 

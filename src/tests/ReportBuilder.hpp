@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <ax310/Protocol.hpp>
+#include <ax310/Types.hpp>
+
 #include <array>
 #include <cstdint>
 #include <vector>
-
-#include <ax310/Protocol.hpp>
-#include <ax310/Types.hpp>
 
 namespace ax310::testing
 {

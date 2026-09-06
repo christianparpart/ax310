@@ -5,10 +5,11 @@
 #include <QMetaType>
 #include <QString>
 #include <QVariantMap>
-#include <utility>
+
 #include <chrono>
 #include <cstddef>
 #include <span>
+#include <utility>
 #include <variant>
 
 namespace ax310::app

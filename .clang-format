@@ -72,35 +72,29 @@ TabWidth: 4
 UseTab: Never
 
 IncludeCategories:
-  - Regex:     '^<(contour)/'
-    Priority:  0
-  - Regex:     '^<(vtbackend)/'
+  # Our own headers first, which is the point of this list. It arrived from
+  # another project and named that project's libraries -- contour, vtbackend,
+  # crispy, libunicode, harfbuzz -- none of which exist here. `<ax310/...>`
+  # matched none of them and fell through to the catch-all at priority 99, so
+  # clang-format moved this project's own headers to the BOTTOM of every file it
+  # touched, quietly, one file at a time.
+  #
+  # Sibling headers in the same directory, and the main header, come first; the
+  # main header is priority 0 automatically.
+  - Regex:     '^"'
     Priority:  1
-  - Regex:     '^<(vtparser)/'
-    Priority:  2
-  - Regex:     '^<(vtpty)/'
-    Priority:  3
-  - Regex:     '^<(vtrasterizer)/'
-    Priority:  4
-  - Regex:     '^<(text_shaper)/'
-    Priority:  5
-  - Regex:     '^<(crispy)/'
-    Priority:  6
-  - Regex:     '^<(libunicode)/'
+  # This project's headers, by their include-directory prefix.
+  - Regex:     '^<(ax310|app|tools|tests)/'
+    Priority:  10
+  # And the test-support headers, which are included unprefixed.
+  - Regex:     '^<[[:alnum:]_]+\.hpp>'
+    Priority:  11
+  # Third-party, then Qt, then the standard library.
+  - Regex:     '^<hidapi'
     Priority:  40
-  - Regex:     '^<(fmt)/'
-    Priority:  42
-  - Regex:     '^<(yaml-cpp)/'
-    Priority:  44
-  - Regex:     '^<(range)/'
-    Priority:  46
-  - Regex:     '^<gsl/'
-    Priority:  48
-  - Regex:     '^<fontconfig/'
-    Priority:  52
-  - Regex:     '^<harfbuzz/'
-    Priority:  53
-  - Regex:     '^<(QtCore|QtGui|QtOpenGL|QtDBus|QtWidgets|QtQml|QtQuick|QtNetwork|QtMultimedia|QtWaylandClient)/'
+  - Regex:     '^<Q[[:alnum:]_]+>'
+    Priority:  64
+  - Regex:     '^<(QtCore|QtGui|QtQml|QtQuick|QtConcurrent|QtNetwork|QtOpenGL)/'
     Priority:  64
   - Regex:     '^<catch2/'
     Priority:  70

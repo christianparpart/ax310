@@ -810,6 +810,17 @@ cmake --build --preset clang-coverage --target coverage
 # and are host-conditioned. They have never been exercised.
 ```
 
+**This project's own headers come first in an include block**, then third-party,
+then Qt, then the standard library. `.clang-format`'s `IncludeCategories` is what
+decides it and `scripts/check-include-order.py` is what enforces it, as a test.
+Reorder with `scripts/fix-include-order.py`, which formats the include region and
+nothing else -- a whole-file `clang-format` would drag in 178 lines of unrelated
+wrapping, because `ColumnLimit` was inherited along with the rest of that config
+and disagrees with how this code is written.
+
+`llvm-include-order` is enabled but does not enforce this: it only checks that a
+block is internally sorted, and cannot see a block in the wrong place.
+
 **`docs/` is a published website.** GitHub Pages serves it from `master` at
 <https://christianparpart.github.io/ax310/>, with Jekyll. So `docs/_config.yml`,
 `docs/_layouts/` and `docs/assets/` are load-bearing, a new page needs YAML front

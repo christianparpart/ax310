@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <ax310/ILogger.hpp>
+#include <ax310/Types.hpp>
+
 #include <catch2/catch_tostring.hpp>
 
 #include <string>
-
-#include <ax310/ILogger.hpp>
-#include <ax310/Types.hpp>
 
 /// Catch2 needs to be told how to render this project's enums.
 ///

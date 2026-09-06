@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Line endings are LF in the working tree on every platform, not only in the
+# repository. That is not a style preference here: docs/wire-protocol.md is
+# generated and then compared to the committed copy byte for byte, and Windows
+# checkouts default to converting text files to CRLF. The check then fails with
+# "out of date, from line 1", printing two lines that look identical because the
+# only difference is a carriage return nobody can see.
+* text=auto eol=lf
+
+# Left exactly as they are.
+*.png binary
+*.ttf binary

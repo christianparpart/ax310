@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <array>
-
 #include "Protocol.hpp"
+
+#include <array>
 
 /// Vendor command sequences replayed from USB captures of the AVerMedia
 /// software.

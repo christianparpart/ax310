@@ -12,8 +12,8 @@
 
 #include <ax310/Protocol.hpp>
 
-#include <cstdint>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <optional>
 #include <print>

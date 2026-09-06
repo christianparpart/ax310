@@ -72,3 +72,101 @@ jobs:
           name: ${{ matrix.preset }}-logs
           path: out/build/${{ matrix.preset }}/Testing/
           if-no-files-found: ignore
+
+  # Windows builds the driver, the tools and the tests -- not because the deck is
+  # supported there, but because the driver is deliberately Qt-free and
+  # platform-free and this is what checks that claim. hidapi has a Windows
+  # backend, `hidapi::hidapi` aliases to whichever backend the platform has, and
+  # nothing first-party includes a POSIX header. If any of that stops being true,
+  # this job is where it shows up rather than the first time somebody tries.
+  #
+  # It is not a support promise. The audio routing is PipeWire, the device
+  # permissions are udev, and neither exists here -- the install rules for both
+  # are guarded to Linux in cmake/Packaging.cmake.
+  windows:
+    name: ${{ matrix.preset }} (windows)
+    runs-on: windows-2022
+
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [cl-release]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Puts cl.exe, the Windows SDK and Ninja on PATH. The presets use the Ninja
+      # generator on every platform, so without this the configure has no compiler
+      # to find.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # qtdeclarative is not in the default install; the interface is QML and the
+      # rendering tests drive it, so it is not optional.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          # Do not raise this past 6.10 without checking aqtinstall first. Qt
+          # restructured its Windows package repository at 6.11 into
+          # per-architecture subdirectories where every release up to 6.10 kept a
+          # flat one, and aqtinstall still asks for the flat path -- so a 6.11
+          # install dies here with "Failed to locate XML data for Qt version".
+          # Linux is unaffected; its repository layout did not change. The same
+          # trap is documented in contour's build.yml, which is where this is
+          # known from.
+          version: '6.8.*'
+          modules: 'qtshadertools'
+          cache: true
+
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/CPM
+          key: cpm-windows-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: cpm-windows-
+
+      # install-qt-action sets QT_ROOT_DIR but does not put Qt's bin on PATH, and
+      # catch_discover_tests runs the test binary during the build to enumerate
+      # its cases. DL_PATHS covers that run; this covers everything else that
+      # might want a Qt DLL, including the diagnostic step below.
+      - name: Put Qt on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "$env:QT_ROOT_DIR\bin"
+
+      - name: Configure
+        env:
+          CPM_SOURCE_CACHE: ~/.cache/CPM
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # A DLL that cannot be found makes a binary exit 0xc0000135 with no output
+      # and nothing naming what is missing, so the build error is unreadable on
+      # its own. This says which import is unresolved.
+      - name: Name the missing DLL, if there is one
+        if: failure()
+        shell: pwsh
+        run: |
+          $exe = "out/build/${{ matrix.preset }}/src/ax310_gui_test.exe"
+          if (-not (Test-Path $exe)) { Write-Host "no binary to inspect"; exit 0 }
+          Write-Host "--- direct run:"
+          & $exe --list-tests 2>&1 | Select-Object -First 5
+          Write-Host "--- exit code: $LASTEXITCODE"
+          Write-Host "--- declared imports:"
+          dumpbin /dependents $exe | Select-String -Pattern "\.dll"
+          Write-Host "--- what is actually in Qt's bin:"
+          Get-ChildItem "$env:QT_ROOT_DIR\bin" -Filter "Qt6*.dll" | Select-Object -ExpandProperty Name
+
+      # Same as on Linux: no deck, no display, no GPU. The native-backend
+      # rendering test skips itself here, because it is gated on a Wayland or X11
+      # session and this is neither.
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.preset }}-windows-logs
+          path: out/build/${{ matrix.preset }}/Testing/
+          if-no-files-found: ignore

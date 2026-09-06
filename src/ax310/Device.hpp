@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Event.hpp"
+#include "IClock.hpp"
+#include "IHidTransport.hpp"
+#include "ILogger.hpp"
+#include "Protocol.hpp"
+#include "Types.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -8,13 +15,6 @@
 #include <expected>
 #include <mutex>
 #include <span>
-
-#include "Event.hpp"
-#include "IClock.hpp"
-#include "IHidTransport.hpp"
-#include "ILogger.hpp"
-#include "Protocol.hpp"
-#include "Types.hpp"
 
 namespace ax310
 {

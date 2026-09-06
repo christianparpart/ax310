@@ -13,19 +13,26 @@ include(GNUInstallDirs)
 
 install(TARGETS ax310_app RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
-# udev rules go to lib/udev/rules.d on every distribution, including the ones
-# where CMAKE_INSTALL_LIBDIR is lib64. This is not a library directory.
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/udev/70-ax310.rules"
-        DESTINATION "lib/udev/rules.d")
+# The three configuration files are for Linux daemons -- udev, PipeWire,
+# WirePlumber -- and a .desktop entry is a freedesktop.org thing. Installing them
+# anywhere else would drop files in places nothing reads. The binary above is
+# cross-platform; this block is not, and says so rather than being written as
+# though every host were Linux.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # udev rules go to lib/udev/rules.d on every distribution, including the ones
+    # where CMAKE_INSTALL_LIBDIR is lib64. This is not a library directory.
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/udev/70-ax310.rules"
+            DESTINATION "lib/udev/rules.d")
 
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/pipewire/ax310-split.conf"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/pipewire/pipewire.conf.d")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/pipewire/ax310-split.conf"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/pipewire/pipewire.conf.d")
 
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/wireplumber/51-ax310.conf"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/wireplumber.conf.d")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/wireplumber/51-ax310.conf"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/wireplumber.conf.d")
 
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/ax310.desktop"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/ax310.desktop"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+endif()
 
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE"
               "${PROJECT_SOURCE_DIR}/NOTICE"

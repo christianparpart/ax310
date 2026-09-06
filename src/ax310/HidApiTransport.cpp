@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "HidApiTransport.hpp"
 
-#include <string>
-
 #include <hidapi.h>
+
+#include <string>
 
 namespace ax310
 {

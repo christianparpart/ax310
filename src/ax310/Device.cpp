@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Device.hpp"
 
+#include "Commands.hpp"
+
 #include <algorithm>
 #include <ranges>
 #include <string>
 #include <utility>
-
-#include "Commands.hpp"
 
 namespace ax310
 {

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "DeviceBridge.hpp"
+
 #include <QBuffer>
 #include <QCommandLineParser>
 #include <QGuiApplication>
@@ -9,10 +11,9 @@
 #include <QQuickView>
 #include <QThreadPool>
 #include <QTimer>
+
 #include <cstdio>
 #include <memory>
-
-#include "DeviceBridge.hpp"
 
 using namespace Qt::StringLiterals;
 

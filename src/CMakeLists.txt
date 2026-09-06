@@ -72,10 +72,12 @@ qt_add_qml_module(ax310_gui
 # agreement with the interface by anyone with a checkout.
 add_executable(ax310_screenshot app/Screenshot.cpp)
 target_link_libraries(ax310_screenshot PRIVATE ax310_gui)
+ax310_place_runtime_dlls(ax310_screenshot)
 set_target_properties(ax310_screenshot PROPERTIES AUTOMOC ON)
 
 add_executable(ax310_app app/main.cpp)
 target_link_libraries(ax310_app PRIVATE ax310_gui)
+ax310_place_runtime_dlls(ax310_app)
 set_target_properties(ax310_app PROPERTIES AUTOMOC ON)
 
 
@@ -120,7 +122,38 @@ if(AX310_BUILD_TESTS)
         message(STATUS "ax310_gui_test builds but is not run under TSan; Qt is not instrumented")
     else()
         include(Catch)
-        catch_discover_tests(ax310_gui_test PROPERTIES SKIP_RETURN_CODE 4)
+        # DL_PATHS is not decoration on Windows. catch_discover_tests runs the
+        # binary with --list-tests at BUILD time to enumerate the cases, and this
+        # one links Qt -- so without the directory holding Qt6Core.dll on the
+        # search path the build fails at 0xc0000135, STATUS_DLL_NOT_FOUND, with
+        # no output and nothing naming Qt. It is ignored where it is not needed.
+        # The fonts this project bundles, as a path the test binary can hand to
+        # Qt on a platform whose font database is otherwise empty.
+        target_compile_definitions(ax310_gui_test PRIVATE
+            AX310_BUNDLED_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/gui/fonts")
+
+        ax310_place_runtime_dlls(ax310_gui_test)
+        catch_discover_tests(ax310_gui_test
+            PROPERTIES SKIP_RETURN_CODE 4
+            DL_PATHS "$<TARGET_FILE_DIR:Qt6::Core>")
+
+        # Our own headers go first, and .clang-format is what decides that. It
+        # arrived from another project naming that project's libraries, so
+        # <ax310/...> matched nothing and sorted last -- and clang-format moved
+        # this project's headers to the bottom of every file it touched, one at a
+        # time, until somebody noticed in review. This is what notices now.
+        # Registered off Windows only. This checks the repository's source, so one
+        # platform checking it is enough -- and Windows would use whichever
+        # clang-format it finds first, which is the one bundled with Visual
+        # Studio. A different version formats differently, so it would report
+        # files as wrong that are not.
+        if(NOT WIN32)
+            add_test(NAME "includes are ordered the way .clang-format says"
+                     COMMAND "${CMAKE_COMMAND}" -E env python3
+                             "${PROJECT_SOURCE_DIR}/scripts/check-include-order.py")
+            set_tests_properties("includes are ordered the way .clang-format says"
+                                 PROPERTIES SKIP_RETURN_CODE 4)
+        endif()
 
         # A second run of the same binary, against the real scene graph.
         #

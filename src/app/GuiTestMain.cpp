@@ -11,10 +11,10 @@
 /// runner has neither a screen nor a driver, and neither does a session where the
 /// deck's owner is away from the machine.
 
-#include <catch2/catch_session.hpp>
-
 #include <QGuiApplication>
 #include <QQuickWindow>
+
+#include <catch2/catch_session.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -29,9 +29,14 @@ int main(int argc, char* argv[])
     // real display; it skips itself where there is none, which includes CI.
     if (qEnvironmentVariableIsSet("AX310_TEST_NATIVE_BACKEND"))
     {
+        // Gated on a Wayland or X11 session specifically, rather than on "a
+        // display" in the abstract. The defect this run exists to catch was found
+        // on Wayland, and nobody has established that the same throwaway-RHI
+        // behaviour shows up under another windowing system -- so on Windows or
+        // macOS this skips rather than pretending to have checked something.
         if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") && qEnvironmentVariableIsEmpty("DISPLAY"))
         {
-            std::puts("no display, so the native-backend rendering tests are skipped");
+            std::puts("no Wayland or X11 session, so the native-backend rendering tests are skipped");
             return 4;
         }
     }
@@ -39,6 +44,21 @@ int main(int argc, char* argv[])
     {
         qputenv("QT_QPA_PLATFORM", "offscreen");
         qputenv("QT_QUICK_BACKEND", "software");
+
+#ifdef _WIN32
+        // The offscreen platform has no font database of its own and Qt no
+        // longer ships fonts, so on Windows it looks for a directory that a
+        // build tree does not have and warns that it found none -- meaning the
+        // rendering tests would be drawing text in nothing at all. This project
+        // bundles two typefaces already; pointing Qt at them is both the fix and
+        // an improvement, because it is the same text on both platforms.
+        //
+        // Windows only, deliberately: Linux reaches fontconfig and already has
+        // fonts, and changing which ones it picks would move every pixel
+        // threshold in this suite for no reason.
+        if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR"))
+            qputenv("QT_QPA_FONTDIR", AX310_BUNDLED_FONT_DIR);
+#endif
 
         // Deterministic frames: without this the renderer is free to skip or
         // coalesce updates, and a grab can catch a half-drawn scene.

@@ -108,6 +108,12 @@ Checks: >-
   -cppcoreguidelines-pro-bounds-constant-array-index,
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   -cppcoreguidelines-pro-type-reinterpret-cast,
+  # Catches includes that are unsorted WITHIN a block. It does not read
+  # .clang-format's IncludeCategories and cannot see a block in the wrong place,
+  # so it is not what keeps this project's own headers first -- measured, after
+  # assuming otherwise. scripts/check-include-order.py is what does that, and it
+  # runs as a test.
+  llvm-include-order,
   misc-*,
   -misc-include-cleaner,
   -misc-multiple-inheritance,

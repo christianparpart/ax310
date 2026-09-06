@@ -186,7 +186,7 @@ the Qt-free rule: `src/ax310` links hidapi and nothing else.
 
 ## Testing
 
-138 tests, no hardware required.
+139 tests, no hardware required.
 
 Driver tests run against a scripted `FakeHidTransport`. The **rendering tests**
 drive real QML through the software scene graph with the offscreen platform, so
@@ -205,8 +205,13 @@ operates the deck, because it is a real `ScreenUI` under a scale transform. That
 is what lets the panel's controls be exercised from a machine with no deck
 attached, and there is a test that clicks through it.
 
-One posts the deck's own touch coordinates into the panel's QML and checks which
-control they reach — the deck reports a touch in screen coordinates and the
+One asks where each of the deck's touch tiles actually is, and whether the
+coordinates the deck reports fall inside it — which is the question that matters,
+because if a tile moves the touches land somewhere else and nobody notices until
+they reach for one. On platforms whose Qt delivers synthetic pointer events, a
+second half presses each tile and checks the control responds; Windows' offscreen
+platform delivers none, so that half runs where it can rather than being deleted
+or quietly skipped — the deck reports a touch in screen coordinates and the
 application passes them through verbatim, so where a tile *looks* and where it
 *is* are the same question, and it is answerable without the deck. It also checks
 that a tile marked as not mapped does nothing when touched, because a control that

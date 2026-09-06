@@ -48,5 +48,6 @@ if(AX310_BUILD_TESTS)
     # this CTest scores that as a failure. (77 is the shell-script convention and
     # is the wrong number here.)
     include(Catch)
+    ax310_place_runtime_dlls(ax310_test)
     catch_discover_tests(ax310_test PROPERTIES SKIP_RETURN_CODE 4)
 endif()

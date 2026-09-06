@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <ax310/Commands.hpp>
+#include <ax310/Protocol.hpp>
+
+#include <Printers.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -6,10 +11,6 @@
 #include <cstdint>
 #include <ios>
 #include <span>
-
-#include <Printers.hpp>
-#include <ax310/Commands.hpp>
-#include <ax310/Protocol.hpp>
 
 using namespace ax310;
 

@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <ax310/Commands.hpp>
+#include <ax310/Device.hpp>
+#include <ax310/FakeHidTransport.hpp>
+
+#include <Printers.hpp>
+#include <ReportBuilder.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -9,12 +16,6 @@
 #include <numeric>
 #include <span>
 #include <vector>
-
-#include <Printers.hpp>
-#include <ReportBuilder.hpp>
-#include <ax310/Commands.hpp>
-#include <ax310/Device.hpp>
-#include <ax310/FakeHidTransport.hpp>
 
 using namespace ax310;
 using namespace std::chrono_literals;
