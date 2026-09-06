@@ -293,3 +293,43 @@ The deck's owner mentioned the panel not always recognising a finger. That is
 their observation and it is recorded as one rather than as a device fact: no
 measurement has separated it from an ordinary capacitive screen missing a light
 touch, and it is not the app, which was never running.
+
+## The microphone registers: 0x1f, 0x20, 0x23
+
+Five one-action captures of the vendor software, all three addresses already in
+`PreservedAddresses` and none of them ever named:
+
+| capture            | `0x20` | `0x23` | `0x1f` |
+| mic type XLR       | `0e`   | `00`   | `38`   |
+| mic type + phantom | `0f`   | `08`   | `00`   |
+| mic type 6.3 mm    | `0e`   | `00`   | `00`   |
+| gain to minimum    | --     | `08`   | `00`   |
+| gain to maximum    | --     | `00`   | `38`   |
+
+**`0x1f` is the gain**, and the strongest reading here: the slider at its floor
+sends `0x00` and at its ceiling `0x38`, so the range is 0 to 56.
+
+**`0x20` bit 0 is phantom power.** XLR and 6.3 mm both send `0x0e` and only the
++48 V position sends `0x0f`. That the two non-phantom types are indistinguishable
+suggests the deck detects the connector itself and only the phantom choice is a
+setting -- which would mean "microphone type" is one host-controlled bit, not a
+three-way selector.
+
+**`0x23` is not resolved.** It is `0x08` for phantom and for gain-at-minimum, and
+`0x00` for the other three. It cannot be a function of the gain alone: 6.3 mm sent
+gain `0x00` with `0x23 = 0x00`, where gain-to-minimum sent the same gain with
+`0x23 = 0x08`.
+
+Also unexplained: switching to phantom sent gain `0x00` when the gain had been
+`0x38` a capture earlier and nobody moved it. Dropping the gain before applying
++48 V would be a sensible thing for the vendor to do, but that is a guess about
+intent and not a measurement.
+
+**None of these are named in `Protocol.hpp` yet, deliberately.** `0x1e` was named
+for screen brightness on capture evidence at least this strong and the hardware
+disagreed. What settles it: with the deck on the host, `--try 1f 00` and
+`--try 1f 38` while listening to the microphone.
+
+What would settle `0x23`: one capture of the gain slider at a **middle** position.
+If `0x1f` takes an intermediate value the gain reading is confirmed continuous,
+and whatever `0x23` does at neither extreme is the clue it has not given yet.
