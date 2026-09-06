@@ -116,6 +116,14 @@ jobs:
           key: cpm-windows-${{ hashFiles('CMakeLists.txt') }}
           restore-keys: cpm-windows-
 
+      # install-qt-action sets QT_ROOT_DIR but does not put Qt's bin on PATH, and
+      # catch_discover_tests runs the test binary during the build to enumerate
+      # its cases. DL_PATHS covers that run; this covers everything else that
+      # might want a Qt DLL, including the diagnostic step below.
+      - name: Put Qt on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "$env:QT_ROOT_DIR\bin"
+
       - name: Configure
         env:
           CPM_SOURCE_CACHE: ~/.cache/CPM
@@ -123,6 +131,23 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
+
+      # A DLL that cannot be found makes a binary exit 0xc0000135 with no output
+      # and nothing naming what is missing, so the build error is unreadable on
+      # its own. This says which import is unresolved.
+      - name: Name the missing DLL, if there is one
+        if: failure()
+        shell: pwsh
+        run: |
+          $exe = "out/build/${{ matrix.preset }}/src/ax310_gui_test.exe"
+          if (-not (Test-Path $exe)) { Write-Host "no binary to inspect"; exit 0 }
+          Write-Host "--- direct run:"
+          & $exe --list-tests 2>&1 | Select-Object -First 5
+          Write-Host "--- exit code: $LASTEXITCODE"
+          Write-Host "--- declared imports:"
+          dumpbin /dependents $exe | Select-String -Pattern "\.dll"
+          Write-Host "--- what is actually in Qt's bin:"
+          Get-ChildItem "$env:QT_ROOT_DIR\bin" -Filter "Qt6*.dll" | Select-Object -ExpandProperty Name
 
       # Same as on Linux: no deck, no display, no GPU. The native-backend
       # rendering test skips itself here, because it is gated on a Wayland or X11
