@@ -158,7 +158,15 @@ captures name them.
   as brightness.
 - **Screen brightness** — the register is still unidentified; `setScreenBrightness`
   is a stub. A `screen-brightness` capture would settle it.
-- **Touch flags byte** at report offset `0x01` — seven values seen, no meaning.
+- **A drag is delivered as press/release/press.** `Device::dispatchEvent` treats
+  the first non-touch report as the finger lifting, and the deck streams meters
+  continuously: measured at 9 interruptions across 15 gestures. `ActionTile` fires
+  on a press-release pair, so a drag across the tile row can activate a tile
+  nobody pressed. Blocked on knowing whether the deck marks a lift at all — a
+  still finger and a lifted one both produce silence, so a timeout would end a
+  press-and-hold.
+- **Touch flags byte** at report offset `0x01` — a monotonic value that latches
+  per contact; three readings of the `0x08` bit have been measured and refuted.
 - **`0xc0` / `0xe0` record writes** — not restored across connect, because their
   length field is a record size rather than a byte count.
 - ~~**`cmake/` carries another project's files.**~~ Done. Five unreachable

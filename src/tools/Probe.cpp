@@ -311,6 +311,7 @@ struct TouchSummary
     std::size_t contacts = 0;
     std::size_t othersBetween = 0;
     std::size_t gesturesWithOthers = 0;
+    std::map<std::string, std::size_t> midGestureKinds;
     std::string contactLog;
     std::map<std::uint8_t, std::size_t> seen;
     std::map<std::uint8_t, std::size_t> startsAContact;
@@ -370,6 +371,13 @@ void reportTouchSummary(IConsole& console, TouchSummary const& run)
     writeLine(console,
               "Device treats the first of those as the finger lifting, so anything above "
               "zero means a drag is reported as press/release/press.");
+    if (!run.midGestureKinds.empty())
+    {
+        writeLine(console, "");
+        writeLine(console, "Their first eight bytes, which is where a lift marker would be:");
+        for (auto const& [shape, count]: run.midGestureKinds)
+            writeLine(console, "  {}  x{}", shape, count);
+    }
 
 }
 
@@ -420,6 +428,11 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
     std::size_t gesturesWithOthers = 0;
     std::size_t othersSinceTouch = 0;
 
+    // What those reports actually are. If the deck marks a lift at all, it is in
+    // here -- and if they are all one shape, it does not, and release has to be
+    // inferred some other way.
+    std::map<std::string, std::size_t> midGestureKinds;
+
     std::size_t touches = 0;
     std::size_t contacts = 0;
     std::optional<std::uint8_t> previousFlags;
@@ -453,7 +466,13 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
         {
             // Only interesting once a finger is down and before it has lifted.
             if (previousFlags.has_value() && (Clock::now() - previousAt) <= ContactGap)
+            {
                 ++othersSinceTouch;
+                std::string shape;
+                for (std::size_t index = 0; index < 8 && index < payload.size(); ++index)
+                    shape += std::format("{:02x} ", payload[index]);
+                ++midGestureKinds[shape];
+            }
             continue;
         }
 
@@ -531,6 +550,7 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
                          .contacts = contacts,
                          .othersBetween = othersBetween,
                          .gesturesWithOthers = gesturesWithOthers,
+                         .midGestureKinds = midGestureKinds,
                          .contactLog = contactLog + std::format("   [{} reports, {} px]", closingReports, closingTravel),
                          .seen = seen,
                          .startsAContact = startsAContact,

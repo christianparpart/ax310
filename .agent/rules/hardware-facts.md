@@ -239,8 +239,18 @@ times a second" and dedupes on it. It also raises a question that matters more
 than the flags byte: `Device::dispatchEvent` treats the first **non-touch** report
 as the finger lifting, and the deck streams meter reports continuously. If those
 interleave with touch reports, every drag is delivered as press, release, press.
-`--touches` now counts non-touch reports arriving mid-gesture, which settles it
-either way.
+Measured: **9 of them, on 9 separate occasions, across 15 gestures.** Roughly one
+per drag. So the driver really does deliver a drag as press, release, press, and
+`ActionTile` fires on a press-release pair -- dragging across the tile row can
+activate a tile nobody pressed.
+
+The fix is not obvious, and this is why. A finger held still produces silence, and
+a finger lifted produces silence, so **silence cannot tell them apart** and a
+timeout would end a press-and-hold. Either the deck marks the lift somewhere and
+the driver is not reading it, or release has to be inferred from something else
+entirely. `--touches` now prints the first eight bytes of every non-touch report
+that arrives mid-gesture: if they are all one shape there is no lift marker among
+them, and if one differs, that is it.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 They are **not** the two-finger case: the deck's owner reports the panel simply
