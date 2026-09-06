@@ -249,12 +249,21 @@ The mistake was in the instrument: `--touches` counted reports the driver
 discards, and the count was then written up as a driver defect. It now applies the
 same filter, so what it counts is what `dispatchEvent` would actually act on.
 
-**The concern is not disposed of, only unproven.** `dispatchEvent` does treat the
-first non-touch report as a lift, and a report is only all-zero when nothing else
-is happening. With audio playing the meters are not zero, so meter reports would
-survive the filter and land mid-drag. That predicts a bug that appears only when
-something is playing -- which is worth one run with music on and a few drags, and
-is not worth asserting before it.
+**And the concern is now largely disposed of, by arithmetic rather than by
+argument.** Idle, the deck reports at roughly ten to fifteen a second -- that is
+what `--meters` measures. Eight seconds of dragging should therefore carry about
+eighty non-touch reports. Two runs carried nine and zero.
+
+So **the deck stops its heartbeat while a finger is on the glass**, and resumes
+after the lift. That makes `dispatchEvent`'s rule -- the first non-touch report
+ends the touch -- not a guess that happens to work but a reading of something the
+deck actually does. It also explains the all-zero reports: they are occasional
+fillers during a touch, not the suppressed heartbeat.
+
+Still open: whether audio was playing during the zero run. If it was, the case is
+closed; if it was not, a heartbeat carrying non-zero meters has still never been
+seen mid-drag, and the ten-to-one gap in the counts already says it does not
+arrive.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 They are **not** the two-finger case: the deck's owner reports the panel simply
