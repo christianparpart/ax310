@@ -120,7 +120,14 @@ if(AX310_BUILD_TESTS)
         message(STATUS "ax310_gui_test builds but is not run under TSan; Qt is not instrumented")
     else()
         include(Catch)
-        catch_discover_tests(ax310_gui_test PROPERTIES SKIP_RETURN_CODE 4)
+        # DL_PATHS is not decoration on Windows. catch_discover_tests runs the
+        # binary with --list-tests at BUILD time to enumerate the cases, and this
+        # one links Qt -- so without the directory holding Qt6Core.dll on the
+        # search path the build fails at 0xc0000135, STATUS_DLL_NOT_FOUND, with
+        # no output and nothing naming Qt. It is ignored where it is not needed.
+        catch_discover_tests(ax310_gui_test
+            PROPERTIES SKIP_RETURN_CODE 4
+            DL_PATHS "$<TARGET_FILE_DIR:Qt6::Core>")
 
         # A second run of the same binary, against the real scene graph.
         #
