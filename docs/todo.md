@@ -175,8 +175,18 @@ captures name them.
   this entry asserted the bug on a measurement that counted the dropped reports.
 - **Touch flags byte** at report offset `0x01` — a monotonic value that latches
   per contact; three readings of the `0x08` bit have been measured and refuted.
-- **`0xc0` / `0xe0` record writes** — not restored across connect, because their
-  length field is a record size rather than a byte count.
+- ~~**`0xc0` / `0xe0` record writes.**~~ Both decoded. `0xc0` colours the
+  function buttons and the knob rings, `0xe0` drives the surround strip in six
+  modes. Neither is restored across connect, which for `0xe0` matters: its "off"
+  is a black solid, so a strip left off stays off across a replug.
+- **Surround brightness reaches the strip twice** — byte 4 and the colour both
+  move when the vendor's brightness slider does, at different ratios. One capture
+  of a *pulsing* mode at two brightnesses, frequency held still, would say whether
+  byte 4 is brightness only in solid or always.
+- **Per-mix knob colour needs the mix selected first** — the ring record carries
+  no mix, so setting the audience mix's colour means selecting it, writing, and
+  selecting back. Whether the deck keeps both colours or the driver must is
+  untested.
 - ~~**`cmake/` carries another project's files.**~~ Done. Five unreachable
   modules removed, the sixth replaced, every surviving cross-reference rewritten,
   and one real defect found in the process: the CPM bootstrap's stall bound had

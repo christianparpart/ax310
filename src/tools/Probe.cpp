@@ -243,6 +243,122 @@ int runButton(HidApiTransport& transport, IConsole& console, std::span<char* con
                            static_cast<std::uint8_t>(*blue));
 }
 
+/// Sends one record to a light address and says so.
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param address Which record address.
+/// @param record The ten values.
+/// @param narration What to print when it lands.
+/// @return Process status.
+int sendLightRecord(HidApiTransport& transport, IConsole& console, std::uint8_t address,
+                    std::span<std::uint8_t const> record, std::string_view narration)
+{
+    auto const framed = protocol::frameFeatureReport(protocol::setPropertyAt(address, record));
+    if (!transport.sendFeatureReport(framed))
+    {
+        writeErrorLine(console, "the write failed");
+        return EXIT_FAILURE;
+    }
+
+    writeLine(console, "{}", narration);
+    return EXIT_SUCCESS;
+}
+
+/// Parses and performs `--knob-colour <rr> <gg> <bb>`.
+///
+/// Colours the rings of whichever mix is selected, because the record cannot name a
+/// mix. Switching mixes afterwards shows the other mix's colour, not this one.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param arguments The whole command line.
+/// @return Process status.
+int runKnobColour(HidApiTransport& transport, IConsole& console, std::span<char* const> arguments)
+{
+    auto const red = parseHex(arguments[2]);
+    auto const green = parseHex(arguments[3]);
+    auto const blue = parseHex(arguments[4]);
+
+    if (!red || !green || !blue || *red > 0xff || *green > 0xff || *blue > 0xff)
+    {
+        writeErrorLine(console, "usage: --knob-colour <rr> <gg> <bb>, all hex");
+        return EXIT_FAILURE;
+    }
+
+    auto const record = protocol::knobColourRecord(static_cast<std::uint8_t>(*red),
+                                                   static_cast<std::uint8_t>(*green),
+                                                   static_cast<std::uint8_t>(*blue));
+    return sendLightRecord(transport,
+                           console,
+                           protocol::ButtonColourAddress,
+                           record,
+                           std::format("the rings of the selected mix set to {:02x}{:02x}{:02x}",
+                                       *red,
+                                       *green,
+                                       *blue));
+}
+
+/// @param name What was typed.
+/// @return The mode it names, or nothing. "off" is spelt separately by the caller.
+[[nodiscard]] std::optional<SurroundMode> surroundModeFromName(std::string_view name)
+{
+    static constexpr std::array<std::string_view, SurroundModeCount> Spellings {
+        "solid", "pulsing", "blinking", "pulsing-rgb", "blinking-rgb", "scrolling-rgb",
+    };
+    static_assert(rowsInEnumeratorOrder(AllSurroundModes));
+
+    for (auto const mode: AllSurroundModes)
+        if (name == Spellings[indexOf(mode)])
+            return mode;
+    return std::nullopt;
+}
+
+/// Parses and performs `--surround off` or `--surround <mode> <rate> <rr> <gg> <bb>`.
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param arguments The whole command line.
+/// @return Process status.
+int runSurround(HidApiTransport& transport, IConsole& console, std::span<char* const> arguments)
+{
+    if (arguments.size() == 3 && std::string_view { arguments[2] } == "off")
+        return sendLightRecord(transport,
+                               console,
+                               protocol::SurroundAddress,
+                               protocol::surroundOffRecord(),
+                               "the surround strip turned off");
+
+    auto const mode = arguments.size() == 7 ? surroundModeFromName(arguments[2]) : std::nullopt;
+    auto const rate = arguments.size() == 7 ? parseHex(arguments[3]) : std::nullopt;
+    auto const red = arguments.size() == 7 ? parseHex(arguments[4]) : std::nullopt;
+    auto const green = arguments.size() == 7 ? parseHex(arguments[5]) : std::nullopt;
+    auto const blue = arguments.size() == 7 ? parseHex(arguments[6]) : std::nullopt;
+
+    if (!mode || !rate || !red || !green || !blue || *rate > 0xff || *red > 0xff || *green > 0xff
+        || *blue > 0xff)
+    {
+        writeErrorLine(console,
+                       "usage: --surround off, or --surround "
+                       "<solid|pulsing|blinking|pulsing-rgb|blinking-rgb|scrolling-rgb> "
+                       "<rate> <rr> <gg> <bb>, all hex");
+        return EXIT_FAILURE;
+    }
+
+    auto const record = protocol::surroundRecord(*mode,
+                                                 static_cast<std::uint8_t>(*rate),
+                                                 static_cast<std::uint8_t>(*red),
+                                                 static_cast<std::uint8_t>(*green),
+                                                 static_cast<std::uint8_t>(*blue));
+    return sendLightRecord(
+        transport,
+        console,
+        protocol::SurroundAddress,
+        record,
+        std::format("surround set to {} at rate 0x{:02x}{}",
+                    nameOf(*mode),
+                    *rate,
+                    cyclesHues(*mode) ? ", which cycles hues and ignores the colour" : ""));
+}
+
 /// Reads the optional trailing seconds argument the watching modes take.
 /// @param arguments The whole command line.
 /// @param fallback What to use when it was not given.
@@ -814,6 +930,9 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --panel-off            blank the panel; touch it to wake it again");
     writeErrorLine(console, "  --panel-brightness <19..64>  set panel brightness, percent in hex");
     writeErrorLine(console, "  --button <tl|tr|bl|br> <rr> <gg> <bb>   light one function button");
+    writeErrorLine(console, "  --knob-colour <rr> <gg> <bb>            colour the selected mix's rings");
+    writeErrorLine(console, "  --surround off                          turn the surround strip off");
+    writeErrorLine(console, "  --surround <mode> <rate> <rr> <gg> <bb> drive the surround strip");
     writeErrorLine(console, "  --try <addr> <value> [seconds] [--fenced]");
     writeErrorLine(console, "                         write one byte, wait while you look at the deck, put it back");
     writeErrorLine(console, "");
@@ -831,6 +950,31 @@ int usage(IConsole& console, std::string_view program)
                      static_cast<std::uint8_t>(effect),
                      protocol::nameIn(protocol::FramedCommandNames, static_cast<std::uint8_t>(effect)));
     return EXIT_FAILURE;
+}
+
+/// Dispatches the three commands that drive lights.
+///
+/// Grouped out of main partly because they belong together -- one address family,
+/// one kind of effect -- and partly because main is held under a complexity cap
+/// that a third lighting command would have broken.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param arguments The whole command line.
+/// @return The process status, or nothing if this is not a lighting command.
+[[nodiscard]] std::optional<int> runLightCommand(HidApiTransport& transport, IConsole& console,
+                                                std::span<char* const> arguments)
+{
+    auto const command = std::string_view { arguments[1] };
+    auto const count = arguments.size();
+
+    if (command == "--button" && count == 6)
+        return runButton(transport, console, arguments);
+    if (command == "--knob-colour" && count == 5)
+        return runKnobColour(transport, console, arguments);
+    if (command == "--surround" && (count == 3 || count == 7))
+        return runSurround(transport, console, arguments);
+    return std::nullopt;
 }
 
 } // namespace
@@ -855,8 +999,8 @@ int main(int argc, char* argv[])
         return EXIT_SUCCESS;
     }
 
-    if (command == "--button" && argc == 6)
-        return runButton(transport, console, arguments);
+    if (auto const status = runLightCommand(transport, console, arguments))
+        return *status;
 
     if (command == "--panel-off" && argc == 2)
         return setPanel(transport, console, protocol::PanelOffLevel);

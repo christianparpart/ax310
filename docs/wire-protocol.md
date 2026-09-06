@@ -161,3 +161,42 @@ Without the final-chunk marker the deck accepts every chunk, reports no error an
 
 A knob property is 7 bytes, with the ring level at offset 4, 20 at full. The captured init sequence sets brightness `0x0d`.
 
+## Colour records
+
+Two addresses take a ten-byte record rather than a value. Address `0xc0` colours the function buttons and the knob rings, with byte 0 choosing which: `0x00` a button, `0x01` the rings.
+
+```
+button   00 <selector> 01 <r> <g> <b> ?? ?? <lit> 80
+rings    01 c0         0a <r> <g> <b> ?? ?? <lit> 80
+```
+
+| Button | Selector |
+| --- | --- |
+| 1 | `0x3c` |
+| 2 | `0x3d` |
+| 3 | `0x3f` |
+| 4 | `0x3e` |
+
+The selectors run clockwise where the button numbering is row-major, so the mapping is a table and not arithmetic. There is no brightness field: the vendor scales the colour it sends, down to a floor of `0x19` per channel.
+
+The ring record carries **no mix**. The vendor keeps a separate ring colour for each mix, and setting either sends the same bytes -- the deck colours whichever mix is selected, so the colour cannot be aimed at the other one.
+
+Address `0xe0` drives the surround light strip:
+
+```
+01 <mode> 01 20 <rate> 00 00 <r> <g> <b>
+```
+
+| Mode | Selector | Rate means | Colour used |
+| --- | --- | --- | --- |
+| Solid | `0x34` | brightness | yes |
+| Pulsing | `0x38` | frequency | yes |
+| Blinking | `0x2c` | frequency | yes |
+| Pulsing RGB | `0x28` | frequency | no, it cycles hues |
+| Blinking RGB | `0x30` | frequency | no, it cycles hues |
+| Scrolling RGB | `0x24` | frequency | no, it cycles hues |
+
+The selectors are four apart rather than one; what the low two bits are for is unknown, and every captured record has them clear. The frequency slider's ends gave `0x01` and `0x0a`.
+
+There is no mode for darkness: the vendor's "off" sends Solid with a black colour. Nothing restores this address on connect, so a strip left black stays black across a replug and looks exactly like one that does not work.
+

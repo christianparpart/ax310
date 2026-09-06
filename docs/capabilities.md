@@ -152,7 +152,8 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Which rings light | `0x21`, `0x14` | ◐ observed, encoding not worked out |
 | Screen brightness | `01 0a <percent>` | ✅ captured and implemented; a family of its own, which is why `0x1e` looked right and was not |
 | Panel off | `01 0a ff` | ✅ captured and implemented; the deck wakes itself, with no host command |
-| RGB lighting control | ring registers, and `0xc0` for the buttons | ◐ ring colour tracks the mix; the four buttons take a full RGB each, captured and encoded, **untested on hardware** |
+| RGB lighting control | `0xc0`, bank-selected: buttons and knob rings | ◐ each button takes a full RGB; the rings take one colour for the selected mix, and the record carries no mix. Captured and encoded, **untested on hardware** |
+| Surround light strip | `0xe0` | ◐ six modes with a colour and a rate, off being a black solid. Captured and encoded, **untested on hardware** |
 | Per-track volume | `0x27` and `0x2e` | ✅ two contiguous six-byte blocks, one per mix, `base + track`; all twelve read and written |
 | Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |
 | Single ↔ Dual Mix | `0x21` (`0x80` single / `0x00` dual), `0x22` | ◐ captured, **not driven** — `0x21` also selects which rings light and which it is doing is unsettled |

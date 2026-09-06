@@ -510,3 +510,89 @@ TEST_CASE("a button colour record is the shape the vendor sends", "[protocol][bu
     CHECK(dark[8] == ButtonDark);
     CHECK(dark[3] == 0);
 }
+
+TEST_CASE("the knob rings take one colour, at the button address", "[protocol][knobs]")
+{
+    using namespace ax310::protocol;
+
+    // Byte for byte against the capture of the vendor setting the rings red:
+    // 01 c0 0a ff 00 00 f8 00 1f 80. Bank 1 rather than 0 is what separates this
+    // from a button record; the two share an address.
+    auto const red = knobColourRecord(0xff, 0x00, 0x00);
+    CHECK(red[0] == KnobBank);
+    CHECK(red[1] == KnobFirstLight);
+    CHECK(red[2] == KnobLightCount);
+    CHECK(red[3] == 0xff);
+    CHECK(red[4] == 0x00);
+    CHECK(red[5] == 0x00);
+    CHECK(red[8] == ButtonLit);
+
+    // The record carries no mix. Captures of the same colour set on the creator
+    // and on the audience mix are identical, so nothing here may vary by mix --
+    // a caller selects the mix first and the deck colours that one.
+    CHECK(red[0] != ButtonBank);
+    CHECK(knobColourRecord(0x00, 0xff, 0x00)[4] == 0xff);
+}
+
+TEST_CASE("every surround mode has its own selector", "[protocol][surround]")
+{
+    using namespace ax310::protocol;
+
+    // The captured values, one per mode, kept here so a reordering of the
+    // enumeration cannot quietly move them.
+    CHECK(selectorFor(SurroundMode::ScrollingRgb) == 0x24);
+    CHECK(selectorFor(SurroundMode::PulsingRgb) == 0x28);
+    CHECK(selectorFor(SurroundMode::Blinking) == 0x2c);
+    CHECK(selectorFor(SurroundMode::BlinkingRgb) == 0x30);
+    CHECK(selectorFor(SurroundMode::Solid) == 0x34);
+    CHECK(selectorFor(SurroundMode::Pulsing) == 0x38);
+
+    // Distinct, and four apart. The gap is unexplained and the point of the table.
+    auto seen = SurroundModeSelectors;
+    std::ranges::sort(seen);
+    CHECK(std::ranges::adjacent_find(seen) == seen.end());
+    for (std::size_t index = 1; index < seen.size(); ++index)
+        CHECK(seen[index] - seen[index - 1] == 4);
+}
+
+TEST_CASE("a surround record is the shape the vendor sends", "[protocol][surround]")
+{
+    using namespace ax310::protocol;
+
+    // Byte for byte against the capture of solid blue: 01 34 01 20 f8 00 00 00 00 ff.
+    auto const solid = surroundRecord(SurroundMode::Solid, 0xf8, 0x00, 0x00, 0xff);
+    CHECK(solid == std::array<std::uint8_t, 10> { 0x01, 0x34, 0x01, 0x20, 0xf8,
+                                                  0x00, 0x00, 0x00, 0x00, 0xff });
+
+    // And against pulsing at each end of the frequency slider, where the same byte
+    // that carried brightness above carries a rate instead.
+    CHECK(surroundRecord(SurroundMode::Pulsing, MinSurroundFrequency, 0, 0, 0x19)[4] == 0x01);
+    CHECK(surroundRecord(SurroundMode::Pulsing, MaxSurroundFrequency, 0, 0, 0x19)[4] == 0x0a);
+
+    // The hue-cycling modes were captured with white in the colour they ignore.
+    auto const scrolling = surroundRecord(SurroundMode::ScrollingRgb, 0x03, 0xff, 0xff, 0xff);
+    CHECK(scrolling == std::array<std::uint8_t, 10> { 0x01, 0x24, 0x01, 0x20, 0x03,
+                                                      0x00, 0x00, 0xff, 0xff, 0xff });
+
+    // Off is not a mode: it is Solid with nothing lit, which is the whole of the
+    // difference between the vendor's "off" capture and its "solid" one.
+    auto const off = surroundOffRecord();
+    CHECK(off[1] == selectorFor(SurroundMode::Solid));
+    CHECK(off[7] == 0x00);
+    CHECK(off[8] == 0x00);
+    CHECK(off[9] == 0x00);
+}
+
+TEST_CASE("surround modes say what their rate byte means", "[protocol][surround]")
+{
+    // Solid is the only mode whose rate is a brightness; the rest are frequencies.
+    CHECK(!isAnimated(SurroundMode::Solid));
+    for (auto const mode: AllSurroundModes)
+        if (mode != SurroundMode::Solid)
+            CHECK(isAnimated(mode));
+
+    // And exactly three cycle hues on their own.
+    CHECK(std::ranges::count_if(AllSurroundModes, [](auto mode) { return cyclesHues(mode); }) == 3);
+    CHECK(cyclesHues(SurroundMode::PulsingRgb));
+    CHECK(!cyclesHues(SurroundMode::Pulsing));
+}

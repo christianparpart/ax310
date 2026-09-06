@@ -380,3 +380,65 @@ and whether `Button`'s enumerators match the deck's physical layout has never be
 verified -- `ButtonBits` runs `0x08, 0x04, 0x02, 0x01`, reversed for no recorded
 reason. Pressing each button and watching which bit arrives would close it, and
 needs no VM.
+
+## The knob rings' colour: the same 0xc0, with byte 0 choosing the bank
+
+    01  c0  0a  <r> <g> <b>  ??  ??  1f  80
+
+Four records. Byte 0 is what separates this from a button record: `0x00` a
+function button, `0x01` the knob rings. Bytes 1 and 2 then read as a first light
+index and a count -- one light at `0x3c` for a button, ten from `0xc0` for the
+rings -- which fits every record captured and has **not** been tested by writing
+anything else. Bytes 3-5 are red, green, blue, proven with the three primaries.
+
+**The mix is not in the record.** The vendor offers a ring colour per mix, and
+"red on the creator mix" and "red on the audience mix" are byte-identical
+captures. The deck colours whichever mix is selected, so the colour cannot be
+aimed -- a caller wanting the other mix's colour selects that mix first.
+
+The vendor writes `KnobLedBrightness` (`0x1e`) immediately before every one of
+these, with the value already in the register. Nothing has shown the colour
+depends on it, so the driver does not replay it.
+
+Bytes 6 and 7 were `f8 00` in all four captures. That is not evidence of meaning:
+the button records carry `bc 1d`, `00 1d` and `00 00` in the same two bytes, so
+the pair is the same unexplained padding there as here.
+
+## The surround strip: 0xe0, ten bytes, six modes
+
+    01  <mode>  01  20  <rate>  00  00  <r> <g> <b>
+
+Thirteen records covering all seven of the vendor's modes and both ends of its
+colour, brightness and frequency controls. This closes `0xe0`, the last record
+address that was unaccounted for.
+
+* **Byte 1 is the mode**, and the six run four apart rather than one:
+
+      0x24  scrolling rgb    0x30  blinking rgb
+      0x28  pulsing rgb      0x34  solid
+      0x2c  blinking         0x38  pulsing
+
+  What the low two bits are for is unknown; every captured record has them clear.
+* **Bytes 7, 8, 9 are red, green, blue.** Proven with green (`00 ff 00`) against
+  blue (`00 00 ff`). The three hue-cycling modes ignore the colour and the vendor
+  still fills it with white rather than leaving it stale.
+* **Byte 4 is one slot with two meanings, chosen by the mode.** In the animated
+  modes it is a frequency: the slider's ends gave `0x01` and `0x0a`. In solid it
+  is a brightness, moving between `0xf8` and `0x7d`.
+
+**"Off" is not a mode.** The vendor's off sends solid (`0x34`) with a black
+colour, byte for byte. Since nothing restores `0xe0` on connect, a strip left
+black stays black across a replug and looks exactly like one that does not work.
+
+**Brightness reaches the strip twice and the curve between is unknown.** Dimming
+a solid blue moved byte 4 from `0xf8` to `0x7d` *and* the blue channel from
+`0xfe` to `0xa0` in the same record. Those are not the same ratio (0.50 against
+0.63), so byte 4 is not simply the scale applied to the colour. Until that is
+measured, a caller wanting a dimmer strip should scale the colour it passes
+rather than rely on byte 4. The lowest channel value seen is `0x19` -- the same
+floor the button colours have.
+
+A note on how the first sweep read: the mode captures were taken at the vendor's
+default colour, which is blue, not the red the capture plan asked for. Reading
+`00 00 ff` as red-in-some-other-byte-order would have inverted the channel order
+for every record here. Green settled it.

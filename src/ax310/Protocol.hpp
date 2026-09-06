@@ -241,6 +241,123 @@ inline constexpr std::uint8_t ButtonDark = 0x00;
              0x80 };
 }
 
+/// The knob rings take one colour for all six, at the button address.
+///
+/// The same `0xc0` the buttons use, with byte 0 selecting which bank of lights the
+/// record addresses: `0x00` a function button, `0x01` the knob rings. Bytes 1 and 2
+/// then read as a first index and a count -- one light at `0x3c` for a button, ten
+/// from `0xc0` for the rings -- which is a reading that fits every record captured
+/// and has not been tested by writing anything else.
+inline constexpr std::uint8_t ButtonBank = 0x00;
+inline constexpr std::uint8_t KnobBank = 0x01;
+inline constexpr std::uint8_t KnobFirstLight = 0xc0;
+inline constexpr std::uint8_t KnobLightCount = 0x0a;
+
+/// Builds the knob-ring colour record.
+///
+/// **The mix is not in the record.** The vendor offers a separate colour for the
+/// creator and audience mixes, and setting either sends this same command: captures
+/// of "red on the creator mix" and "red on the audience mix" are byte-identical.
+/// The deck applies the colour to whichever mix is selected, so a caller wanting
+/// the other mix's colour must select that mix first -- the colour cannot be aimed.
+///
+/// The vendor also writes `Property::KnobLedBrightness` immediately before this,
+/// every time, with the value already in the register. Replaying it is harmless and
+/// this does not, because nothing has shown the colour depends on it.
+///
+/// @param red Red, 0 to 255.
+/// @param green Green.
+/// @param blue Blue.
+/// @return The ten values to write to ButtonColourAddress.
+[[nodiscard]] constexpr std::array<std::uint8_t, 10> knobColourRecord(
+    std::uint8_t red, std::uint8_t green, std::uint8_t blue) noexcept
+{
+    return { KnobBank, KnobFirstLight, KnobLightCount, red, green, blue,
+             0xf8,     0x00,           ButtonLit,      0x80 };
+}
+
+/// Where the surround light strip is configured.
+///
+/// The second record address, and the last one that was unaccounted for. Nothing
+/// restores it on connect, so whatever the strip was last told survives a
+/// reconnect -- including a black Solid, which looks exactly like a strip that
+/// does not work.
+inline constexpr std::uint8_t SurroundAddress = 0xe0;
+
+/// The wire value for each mode, indexed by SurroundMode.
+///
+/// Consecutive in steps of four rather than of one, which is why these are a table
+/// and not arithmetic on the enumerator. What the low two bits are for is unknown;
+/// every captured record has them clear.
+inline constexpr std::array<std::uint8_t, SurroundModeCount> SurroundModeSelectors {
+    0x34, // Solid
+    0x38, // Pulsing
+    0x2c, // Blinking
+    0x28, // PulsingRgb
+    0x30, // BlinkingRgb
+    0x24, // ScrollingRgb
+};
+static_assert(rowsInEnumeratorOrder(AllSurroundModes));
+
+/// @param mode Which mode.
+/// @return The selector byte its record carries.
+[[nodiscard]] constexpr std::uint8_t selectorFor(SurroundMode mode) noexcept
+{
+    return SurroundModeSelectors[indexOf(mode)];
+}
+
+/// The extremes the vendor's frequency slider reached, in the animated modes.
+///
+/// Observed, not proven to be the limits: the slider was taken to each end and
+/// these are what came out. Nothing has tried a value outside them.
+inline constexpr std::uint8_t MinSurroundFrequency = 0x01;
+inline constexpr std::uint8_t MaxSurroundFrequency = 0x0a;
+
+/// Builds one surround-strip record.
+///
+/// The layout, from thirteen captures covering all seven of the vendor's modes and
+/// both ends of its colour, brightness and frequency controls:
+///
+///     01 <mode> 01 20 <rate> 00 00 <r> <g> <b>
+///
+/// `rate` is one slot with two meanings, chosen by the mode: a frequency in the
+/// animated modes, where the slider's ends gave `0x01` and `0x0a`, and a brightness
+/// in Solid, where the same byte moved between `0xf8` and `0x7d`. That is why this
+/// takes an unnamed byte rather than a frequency -- one parameter that means two
+/// things is what the wire has, and naming it for one of them would be a lie in the
+/// other mode.
+///
+/// Brightness is folded into the colour as well as into `rate`: dimming a solid
+/// blue moved the blue channel from `0xfe` to `0xa0` in the same record that moved
+/// `rate`. The exact curve between the two is not known, so a caller that wants a
+/// dimmer strip should scale the colour it passes and not rely on `rate` alone.
+/// The lowest channel value the vendor was seen to send is `0x19`, the same floor
+/// its button colours have.
+///
+/// @param mode Which animation.
+/// @param rate Frequency when the mode animates, brightness when it is Solid.
+/// @param red Red, 0 to 255. Ignored by the deck in the hue-cycling modes.
+/// @param green Green.
+/// @param blue Blue.
+/// @return The ten values to write to SurroundAddress.
+[[nodiscard]] constexpr std::array<std::uint8_t, 10> surroundRecord(
+    SurroundMode mode, std::uint8_t rate, std::uint8_t red, std::uint8_t green,
+    std::uint8_t blue) noexcept
+{
+    return { 0x01, selectorFor(mode), 0x01, 0x20, rate, 0x00, 0x00, red, green, blue };
+}
+
+/// Builds the record that turns the strip off.
+///
+/// Solid and black, because that is what the vendor's "off" mode sends -- there is
+/// no mode byte for darkness.
+///
+/// @return The ten values to write to SurroundAddress.
+[[nodiscard]] constexpr std::array<std::uint8_t, 10> surroundOffRecord() noexcept
+{
+    return surroundRecord(SurroundMode::Solid, 0xf8, 0x00, 0x00, 0x00);
+}
+
 /// The display command group: `[0x01][0x0a][level]`, and that is the whole of it.
 ///
 /// A second family beside the property one, which is why the screen's brightness

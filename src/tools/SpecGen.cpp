@@ -415,6 +415,64 @@ void writeSpec(Document& out)
              MaxKnobLedLevel,
              hex(static_cast<std::uint8_t>(KnobLedBrightnessAtStartup)));
     out.line("");
+
+    // ---- Colour records --------------------------------------------------
+    out.line("## Colour records");
+    out.line("");
+    out.line("Two addresses take a ten-byte record rather than a value. Address `{}` colours "
+             "the function buttons and the knob rings, with byte 0 choosing which: `{}` a "
+             "button, `{}` the rings.",
+             hex(ButtonColourAddress),
+             hex(ButtonBank),
+             hex(KnobBank));
+    out.line("");
+    out.line("```");
+    out.line("button   {:02x} <selector> 01 <r> <g> <b> ?? ?? <lit> 80", ButtonBank);
+    out.line("rings    {:02x} {:02x}         {:02x} <r> <g> <b> ?? ?? <lit> 80",
+             KnobBank,
+             KnobFirstLight,
+             KnobLightCount);
+    out.line("```");
+    out.line("");
+    out.line("| Button | Selector |");
+    out.line("| --- | --- |");
+    for (auto const button: AllButtons)
+        out.line("| {} | `{}` |", indexOf(button) + 1, hex(selectorFor(button)));
+    out.line("");
+    out.line("The selectors run clockwise where the button numbering is row-major, so the "
+             "mapping is a table and not arithmetic. There is no brightness field: the vendor "
+             "scales the colour it sends, down to a floor of `0x19` per channel.");
+    out.line("");
+    out.line("The ring record carries **no mix**. The vendor keeps a separate ring colour for "
+             "each mix, and setting either sends the same bytes -- the deck colours whichever "
+             "mix is selected, so the colour cannot be aimed at the other one.");
+    out.line("");
+    out.line("Address `{}` drives the surround light strip:", hex(SurroundAddress));
+    out.line("");
+    out.line("```");
+    out.line("01 <mode> 01 20 <rate> 00 00 <r> <g> <b>");
+    out.line("```");
+    out.line("");
+    out.line("| Mode | Selector | Rate means | Colour used |");
+    out.line("| --- | --- | --- | --- |");
+    for (auto const mode: AllSurroundModes)
+        out.line("| {} | `{}` | {} | {} |",
+                 nameOf(mode),
+                 hex(selectorFor(mode)),
+                 isAnimated(mode) ? "frequency" : "brightness",
+                 cyclesHues(mode) ? "no, it cycles hues" : "yes");
+    out.line("");
+    out.line("The selectors are four apart rather than one; what the low two bits are for is "
+             "unknown, and every captured record has them clear. The frequency slider's ends "
+             "gave `{}` and `{}`.",
+             hex(MinSurroundFrequency),
+             hex(MaxSurroundFrequency));
+    out.line("");
+    out.line("There is no mode for darkness: the vendor's \"off\" sends {} with a black "
+             "colour. Nothing restores this address on connect, so a strip left black stays "
+             "black across a replug and looks exactly like one that does not work.",
+             nameOf(SurroundMode::Solid));
+    out.line("");
 }
 
 } // namespace

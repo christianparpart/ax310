@@ -41,6 +41,63 @@ inline constexpr std::array<Button, ButtonCount> AllButtons {
     Button::BottomRight,
 };
 
+/// How the surround light strip is animated.
+///
+/// Six modes, and the vendor's seventh -- "off" -- is not one of them: turning the
+/// strip off sends Solid with a black colour, byte for byte. The enumeration keeps
+/// only what the wire distinguishes, so `Off` cannot drift away from the colour
+/// that actually implements it.
+///
+/// The three RGB modes cycle through hues by themselves and ignore the colour in
+/// the record; the vendor still fills it with white rather than leaving it stale.
+enum class SurroundMode : std::uint8_t
+{
+    Solid = 0,
+    Pulsing = 1,
+    Blinking = 2,
+    PulsingRgb = 3,
+    BlinkingRgb = 4,
+    ScrollingRgb = 5,
+
+    Last = ScrollingRgb
+};
+
+/// Number of surround modes, derived from the enumeration rather than stated.
+inline constexpr std::size_t SurroundModeCount = static_cast<std::size_t>(SurroundMode::Last) + 1;
+
+/// What each mode is called, indexed by the enumerator.
+inline constexpr std::array<std::string_view, SurroundModeCount> SurroundModeNames {
+    "Solid", "Pulsing", "Blinking", "Pulsing RGB", "Blinking RGB", "Scrolling RGB",
+};
+
+/// Every SurroundMode, in enumerator order, for iterating without an index loop.
+inline constexpr std::array<SurroundMode, SurroundModeCount> AllSurroundModes {
+    SurroundMode::Solid,       SurroundMode::Pulsing,     SurroundMode::Blinking,
+    SurroundMode::PulsingRgb,  SurroundMode::BlinkingRgb, SurroundMode::ScrollingRgb,
+};
+
+/// @param mode The mode to name.
+/// @return Its display label.
+[[nodiscard]] constexpr std::string_view nameOf(SurroundMode mode) noexcept
+{
+    return SurroundModeNames[static_cast<std::size_t>(mode)];
+}
+
+/// @param mode The mode to ask about.
+/// @return Whether the mode cycles hues on its own and ignores the record's colour.
+[[nodiscard]] constexpr bool cyclesHues(SurroundMode mode) noexcept
+{
+    return mode == SurroundMode::PulsingRgb || mode == SurroundMode::BlinkingRgb
+           || mode == SurroundMode::ScrollingRgb;
+}
+
+/// @param mode The mode to ask about.
+/// @return Whether the mode animates, which decides what its rate byte means.
+[[nodiscard]] constexpr bool isAnimated(SurroundMode mode) noexcept
+{
+    return mode != SurroundMode::Solid;
+}
+
 /// The deck's six rotary knobs, named as they are printed on its face, left to
 /// right. The first three are physical inputs and the last three are the host's
 /// digital tracks -- which is why the deck presents six playback channels as three
@@ -288,6 +345,13 @@ inline constexpr std::array<std::string_view, DeviceErrorCount> DeviceErrorTexts
     return static_cast<std::size_t>(button);
 }
 
+/// @param mode The surround mode to index.
+/// @return Its zero-based position, for indexing a per-mode table.
+[[nodiscard]] constexpr std::size_t indexOf(SurroundMode mode) noexcept
+{
+    return static_cast<std::size_t>(mode);
+}
+
 /// @param rows A table meant to be indexed by its enumerator.
 /// @return Whether every row sits at the index of the enumerator it names.
 template <typename Enum, std::size_t N>
@@ -321,5 +385,7 @@ template <typename Row, std::size_t N, typename Project>
 static_assert(rowsInEnumeratorOrder(AllButtons), "AllButtons must list every Button at its own index");
 static_assert(rowsInEnumeratorOrder(AllKnobs), "AllKnobs must list every KnobId at its own index");
 static_assert(rowsInEnumeratorOrder(AllMixes), "AllMixes must list every MixId at its own index");
+static_assert(rowsInEnumeratorOrder(AllSurroundModes),
+              "AllSurroundModes must list every SurroundMode at its own index");
 
 } // namespace ax310
