@@ -19,15 +19,12 @@ def main() -> int:
         return 1
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    sources = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "src/**/*.cpp", "src/**/*.hpp"],
-        capture_output=True, text=True, check=True,
-    ).stdout.split()
+    sources = sorted(p for p in (root / "src").rglob("*")
+                     if p.suffix in {".cpp", ".hpp"} and p.is_file())
 
     fixed = 0
-    for name in sources:
-        path = root / name
-        text = path.read_text()
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
         numbers = [i + 1 for i, line in enumerate(text.splitlines())
                    if line.startswith("#include")]
         if not numbers:
@@ -39,7 +36,7 @@ def main() -> int:
         )
         if path.read_text() != text:
             fixed += 1
-            print(f"  reordered {name}")
+            print(f"  reordered {path.relative_to(root).as_posix()}")
 
     print(f"{fixed} file(s) changed")
     return 0

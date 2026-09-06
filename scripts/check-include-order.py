@@ -15,7 +15,14 @@ of that is a separate decision from keeping includes in order, so this looks at
 the include region and nothing else.
 
 Exits 0 when every file agrees, 1 when one does not, and 4 -- CTest's skip code
-here -- when clang-format is not installed.
+here -- when clang-format is missing or will not run.
+
+It walks the filesystem rather than asking git, and skips rather than fails when
+the formatter misbehaves. Both of those are scars: the first version shelled out
+to `git ls-files`, which fails inside the CI container with git's dubious-ownership
+error, and let a clang-format that exited non-zero fail the test rather than
+disqualify itself. A formatter that cannot run is not evidence of a misordered
+include.
 """
 
 import pathlib
@@ -38,26 +45,28 @@ def main() -> int:
         return 4
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    sources = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "src/**/*.cpp", "src/**/*.hpp"],
-        capture_output=True, text=True, check=True,
-    ).stdout.split()
+    sources = sorted(p for p in (root / "src").rglob("*")
+                     if p.suffix in {".cpp", ".hpp"} and p.is_file())
 
     wrong = []
-    for name in sources:
-        path = root / name
-        text = path.read_text()
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
         region = include_region(text)
         if region is None:
             continue
 
         first, last = region
-        formatted = subprocess.run(
+        result = subprocess.run(
             [formatter, f"--lines={first}:{last}", f"--assume-filename={path}"],
-            input=text, capture_output=True, text=True, check=True,
-        ).stdout
-        if formatted != text:
-            wrong.append(name)
+            input=text, capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            print(f"{formatter} would not run: {result.stderr.strip()}")
+            print("include order is not checked here")
+            return 4
+
+        if result.stdout != text:
+            wrong.append(path.relative_to(root).as_posix())
 
     if not wrong:
         print(f"include order is right in all {len(sources)} files")

@@ -142,11 +142,18 @@ if(AX310_BUILD_TESTS)
         # <ax310/...> matched nothing and sorted last -- and clang-format moved
         # this project's headers to the bottom of every file it touched, one at a
         # time, until somebody noticed in review. This is what notices now.
-        add_test(NAME "includes are ordered the way .clang-format says"
-                 COMMAND "${CMAKE_COMMAND}" -E env python3
-                         "${PROJECT_SOURCE_DIR}/scripts/check-include-order.py")
-        set_tests_properties("includes are ordered the way .clang-format says"
-                             PROPERTIES SKIP_RETURN_CODE 4)
+        # Registered off Windows only. This checks the repository's source, so one
+        # platform checking it is enough -- and Windows would use whichever
+        # clang-format it finds first, which is the one bundled with Visual
+        # Studio. A different version formats differently, so it would report
+        # files as wrong that are not.
+        if(NOT WIN32)
+            add_test(NAME "includes are ordered the way .clang-format says"
+                     COMMAND "${CMAKE_COMMAND}" -E env python3
+                             "${PROJECT_SOURCE_DIR}/scripts/check-include-order.py")
+            set_tests_properties("includes are ordered the way .clang-format says"
+                                 PROPERTIES SKIP_RETURN_CODE 4)
+        endif()
 
         # A second run of the same binary, against the real scene graph.
         #
