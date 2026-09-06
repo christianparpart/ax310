@@ -229,5 +229,12 @@ fact within minutes of hearing it. The deck's owner then said plainly that the
 last frame persists. Twice in this project a guess has been written down as
 established and had to be taken back out; this is the second.
 
-Touch recognition **is** sometimes intermittent, and that part is real and
-unexplained. It is not the screen being off, because the screen is not off.
+**Touch is reported with no application running at all.** Every touch measurement
+so far was taken with `ax310_probe` alone and nothing pushing frames, and the deck
+sent throughout -- 638 reports in one thirty-second run. Nothing has to be started
+first to gather touch data.
+
+The deck's owner mentioned the panel not always recognising a finger. That is
+their observation and it is recorded as one rather than as a device fact: no
+measurement has separated it from an ordinary capacitive screen missing a light
+touch, and it is not the app, which was never running.
