@@ -177,27 +177,28 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
     return static_cast<int>(*given);
 }
 
-/// Sends the one command known to blank the deck's panel.
+/// Sets the panel's brightness, or turns it off.
 ///
-/// Exactly the bytes the vendor software sends, replayed. Nothing is composed
-/// here, because the grammar of this command group is not known -- see
-/// protocol::BlankPanelCommand.
+/// The display group is `[0x01][0x0a][level]` and the level is a percentage, with
+/// 0xff meaning off. All three of those were captured from the vendor software.
 ///
 /// @param transport An open control interface.
 /// @param console Where the narration goes.
+/// @param level The percentage, or protocol::PanelOffLevel.
 /// @return Process status.
-int blankPanel(HidApiTransport& transport, IConsole& console)
+int setPanel(HidApiTransport& transport, IConsole& console, std::uint8_t level)
 {
-    protocol::Payload payload {};
-    std::ranges::copy(protocol::BlankPanelCommand, payload.begin());
-
-    if (!transport.sendFeatureReport(protocol::frameFeatureReport(payload)))
+    if (!transport.sendFeatureReport(protocol::frameFeatureReport(protocol::displayCommand(level))))
     {
         writeErrorLine(console, "the write failed");
         return EXIT_FAILURE;
     }
 
-    writeLine(console, "sent 01 0a ff -- the panel should be dark; touch it to wake it");
+    if (level == protocol::PanelOffLevel)
+        writeLine(console, "sent 01 0a ff -- the panel should be dark; touch it to wake it");
+    else
+        writeLine(console, "sent 01 0a {:02x} -- the panel should be at {}%", level, level);
+
     return EXIT_SUCCESS;
 }
 
@@ -707,6 +708,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --meters [seconds]     watch the per-track meters, and report their peaks");
     writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
     writeErrorLine(console, "  --panel-off            blank the panel; touch it to wake it again");
+    writeErrorLine(console, "  --panel-brightness <19..64>  set panel brightness, percent in hex");
     writeErrorLine(console, "  --try <addr> <value> [seconds] [--fenced]");
     writeErrorLine(console, "                         write one byte, wait while you look at the deck, put it back");
     writeErrorLine(console, "");
@@ -749,7 +751,24 @@ int main(int argc, char* argv[])
     }
 
     if (command == "--panel-off" && argc == 2)
-        return blankPanel(transport, console);
+        return setPanel(transport, console, protocol::PanelOffLevel);
+
+    if (command == "--panel-brightness" && argc == 3)
+    {
+        auto const percent = parseHex(arguments[2]);
+        if (!percent || *percent < static_cast<unsigned>(protocol::MinPanelBrightness)
+            || *percent > static_cast<unsigned>(protocol::MaxPanelBrightness))
+        {
+            writeErrorLine(console,
+                           "--panel-brightness takes {}..{}, in hex like the other commands; "
+                           "the vendor's own slider goes no dimmer",
+                           protocol::MinPanelBrightness,
+                           protocol::MaxPanelBrightness);
+            return EXIT_FAILURE;
+        }
+
+        return setPanel(transport, console, static_cast<std::uint8_t>(*percent));
+    }
 
     if (command == "--touches" && argc <= 3)
     {

@@ -1315,3 +1315,47 @@ TEST_CASE("a level asked for between steps lands on the nearest one", "[device][
 
     CHECK(harness.transport.sent().front().bytes[5] == 5);
 }
+
+TEST_CASE("the panel's brightness goes out as a display command", "[device][display]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setScreenBrightness(64).has_value());
+
+    auto const& sent = harness.transport.sent().back().bytes;
+    // [report id][0x01][0x0a][level] -- the display group, not a property write.
+    CHECK(sent[1] == static_cast<std::uint8_t>(protocol::CommandKind::Set));
+    CHECK(sent[2] == protocol::DisplayGroup);
+    CHECK(sent[3] == 64);
+}
+
+TEST_CASE("a brightness the vendor would not send is clamped, not passed on",
+          "[device][display]")
+{
+    // The vendor's slider stops at 25 and offers an off widget instead, so
+    // nothing below that has ever been observed on the wire. Sending 1% would be
+    // finding out what it does on somebody's deck.
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.setScreenBrightness(1).has_value());
+    CHECK(harness.transport.sent().back().bytes[3] == protocol::MinPanelBrightness);
+
+    REQUIRE(harness.device.setScreenBrightness(400).has_value());
+    CHECK(harness.transport.sent().back().bytes[3] == protocol::MaxPanelBrightness);
+}
+
+TEST_CASE("blanking the panel sends the off sentinel, which is not a brightness",
+          "[device][display]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.blankScreen().has_value());
+
+    auto const& sent = harness.transport.sent().back().bytes;
+    CHECK(sent[2] == protocol::DisplayGroup);
+    CHECK(sent[3] == protocol::PanelOffLevel);
+    CHECK(protocol::PanelOffLevel > protocol::MaxPanelBrightness);
+}

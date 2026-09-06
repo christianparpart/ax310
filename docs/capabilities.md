@@ -150,7 +150,8 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Knob LED ring brightness | `0x1e` | ✅ confirmed on hardware |
 | Knob LED ring levels | `0x27` | ✅ confirmed, and **readable back** |
 | Which rings light | `0x21`, `0x14` | ◐ observed, encoding not worked out |
-| Screen brightness | unknown register | ❌ stub; `0x1e` was the candidate and the hardware refuted it |
+| Screen brightness | `01 0a <percent>` | ✅ captured and implemented; a family of its own, which is why `0x1e` looked right and was not |
+| Panel off | `01 0a ff` | ✅ captured and implemented; the deck wakes itself, with no host command |
 | RGB lighting control | partly the ring registers | ◐ ring colour tracks the mix (blue creator / orange audience) |
 | Per-track volume | `0x27` and `0x2e` | ✅ two contiguous six-byte blocks, one per mix, `base + track`; all twelve read and written |
 | Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |

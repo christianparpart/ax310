@@ -148,28 +148,49 @@ enum class CommandKind : std::uint8_t
 /// Second byte of a property command. The only group seen so far.
 inline constexpr std::uint8_t PropertyGroup = 0x10;
 
-/// A second command group, and so far it has exactly one member.
+/// The display command group: `[0x01][0x0a][level]`, and that is the whole of it.
 ///
-/// Captured with the vendor software: tapping its panel-off widget sends
-/// `01 0a ff` and nothing else, once. An idle capture of the same length sends no
-/// commands at all -- only screen frames -- and turning the panel back on sends
-/// nothing either, so the deck wakes itself and only the blanking is host-driven.
+/// A second family beside the property one, which is why the screen's brightness
+/// was never found among the property addresses -- it was never there. `0x1e` was
+/// once named for it on strong evidence from captures alone, and the hardware
+/// disagreed: that register dims the knob rings.
 ///
-/// Whether `0x0a` is a group in the property family's sense, and whether `0xff`
-/// is an address or a value, is **not** established: the property grammar is
-/// `[kind][0x10][address][length][values]`, and `01 0a ff 00` does not fit it --
-/// a zero-length write to address `0xff` would be an odd thing to send. One
-/// observation cannot separate the readings, so the bytes are recorded as
-/// observed rather than parsed into fields that may not exist.
+/// Three captures of the vendor software settled the encoding between them, each
+/// sending exactly one command where an idle capture of the same length sends
+/// none at all:
+///
+///   | action                | command       | third byte |
+///   | slider to minimum     | `01 0a 19`    | 25         |
+///   | slider to maximum     | `01 0a 64`    | 100        |
+///   | the panel-off widget  | `01 0a ff`    | 255        |
+///
+/// So the third byte is a **percentage**, the vendor's slider runs 25 to 100, and
+/// `0xff` is a sentinel for off rather than a level.
 inline constexpr std::uint8_t DisplayGroup = 0x0a;
 
-/// The exact bytes the vendor software sends to blank the panel.
+/// The dimmest and brightest the vendor's own slider will send.
 ///
-/// Replayed verbatim rather than composed from a grammar, because the grammar is
-/// a guess and this is not: it is what was on the wire. Sending an unobserved
-/// variation -- `01 0a 00` for "on", say -- is the move that once wedged a deck,
-/// so there is no `panelOn` here. The deck wakes on its own.
-inline constexpr std::array<std::uint8_t, 3> BlankPanelCommand { 0x01, DisplayGroup, 0xff };
+/// Values below the minimum are not refused by anything here, but they have never
+/// been observed: the vendor stops at 25 and offers the off widget instead, which
+/// suggests the panel does not usefully dim further. Device clamps to this range
+/// rather than discovering what 1% does on somebody's deck.
+inline constexpr int MinPanelBrightness = 25;
+inline constexpr int MaxPanelBrightness = 100;
+
+/// The value that turns the panel off, which is not a brightness.
+inline constexpr std::uint8_t PanelOffLevel = 0xff;
+
+/// Builds a display command.
+/// @param level A percentage, or PanelOffLevel.
+/// @return The payload to frame and send.
+[[nodiscard]] constexpr Payload displayCommand(std::uint8_t level) noexcept
+{
+    Payload payload {};
+    payload[0] = static_cast<std::uint8_t>(CommandKind::Set);
+    payload[1] = DisplayGroup;
+    payload[2] = level;
+    return payload;
+}
 
 /// Addresses that must not be written.
 ///

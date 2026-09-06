@@ -89,7 +89,22 @@ class Device
     /// Sets the screen backlight.
     /// @param level Brightness in percent.
     /// @return Nothing, or why the write failed.
+    /// Sets the panel's brightness.
+    ///
+    /// @param level A percentage. Clamped to the range the vendor's own slider
+    ///        sends, 25 to 100: dimmer values have never been observed and the
+    ///        vendor offers blankScreen() instead of going below its minimum.
+    /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> setScreenBrightness(int level);
+
+    /// Turns the panel off.
+    ///
+    /// There is no matching call to turn it on: the deck wakes itself when the
+    /// glass is touched, and a capture of that happening contains no
+    /// host-to-device traffic to imitate.
+    ///
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> blankScreen();
 
     /// Sets how brightly the knob LED rings glow.
     /// @param percent Brightness, 0 to 100.

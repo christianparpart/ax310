@@ -95,6 +95,18 @@ Two contiguous blocks of 6 bytes, one per mix, addressed `base + track` in knob 
 | Creator | `0x27` | `0x27` | `0x28` | `0x29` | `0x2a` | `0x2b` | `0x2c` |
 | Audience | `0x2e` | `0x2e` | `0x2f` | `0x30` | `0x31` | `0x32` | `0x33` |
 
+## The display
+
+A family of its own -- `[0x01] [0x0a] [level]` -- and the reason the panel's brightness was never found among the property registers: it is not there.
+
+The level is a percentage. `0xff` is not a brightness but a sentinel that turns the panel off; the deck wakes itself when the glass is touched, and does so with no host command at all.
+
+| Level | Meaning |
+| --- | --- |
+| `0x19` | dimmest the vendor's slider sends |
+| `0x64` | brightest |
+| `0xff` | off |
+
 ## Framed commands
 
 The DSP chain uses a second family: `0xfe 0x00 <length> <command> <body…> <checksum>`, 5 bytes of overhead around a body of at most 22.

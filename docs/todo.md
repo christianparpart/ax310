@@ -159,8 +159,10 @@ captures name them.
   of doing so contains zero host-to-device traffic. Worth having for its own sake — a deck left on a desk
   overnight should not be showing a bright panel — and it may be the same register
   as brightness.
-- **Screen brightness** — the register is still unidentified; `setScreenBrightness`
-  is a stub. A `screen-brightness` capture would settle it.
+- ~~**Screen brightness.**~~ `01 0a <percent>`, captured from the vendor's slider
+  at both ends: `0x19` at minimum and `0x64` at maximum. `setScreenBrightness` is
+  implemented and clamps to that range. **Not yet confirmed on the hardware** —
+  the VM held the deck when it was captured.
 - **Does a drag survive with audio playing?** `Device::dispatchEvent` treats the
   first non-touch report as the finger lifting. All-zero reports are dropped
   before that, and in silence every report interleaving a drag was all-zero — so

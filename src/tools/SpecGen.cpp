@@ -307,6 +307,26 @@ void writeSpec(Document& out)
     }
     out.line("");
 
+    // ---- Display -----------------------------------------------------------
+    out.line("## The display");
+    out.line("");
+    out.line("A family of its own -- `[{}] [{}] [level]` -- and the reason the panel's "
+             "brightness was never found among the property registers: it is not there.",
+             hex(static_cast<std::uint8_t>(CommandKind::Set)),
+             hex(DisplayGroup));
+    out.line("");
+    out.line("The level is a percentage. `{}` is not a brightness but a sentinel that turns "
+             "the panel off; the deck wakes itself when the glass is touched, and does so with "
+             "no host command at all.",
+             hex(PanelOffLevel));
+    out.line("");
+    out.line("| Level | Meaning |");
+    out.line("| --- | --- |");
+    out.line("| `{}` | dimmest the vendor's slider sends |", hex(MinPanelBrightness));
+    out.line("| `{}` | brightest |", hex(MaxPanelBrightness));
+    out.line("| `{}` | off |", hex(PanelOffLevel));
+    out.line("");
+
     // ---- Framed family ---------------------------------------------------
     out.line("## Framed commands");
     out.line("");

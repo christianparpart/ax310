@@ -486,12 +486,44 @@ std::expected<void, DeviceError> Device::setScreenBrightness(int level)
     if (!_transport.isOpen())
         return std::unexpected(DeviceError::NotConnected);
 
-    // Still not implemented. Property 0x1e looked like the answer from the
-    // captures -- the only property both sequences write, and to different values
-    // -- but on the hardware it dims the knob LED rings and leaves the panel
-    // alone. Wrong subsystem, right register. See setKnobLedBrightness.
-    logTo(_logger, LogLevel::Debug, "setScreenBrightness({}) is not implemented yet", level);
-    return {};
+    // Clamped to what the vendor's own slider will send. Values below the
+    // minimum have never been observed -- the vendor stops at 25 and offers a
+    // separate off widget -- and finding out what 1% does belongs on a deck
+    // somebody is willing to lose, not here.
+    auto const percent = std::clamp(level, protocol::MinPanelBrightness, protocol::MaxPanelBrightness);
+    if (percent != level)
+        logTo(_logger, LogLevel::Debug, "screen brightness {} clamped to {}", level, percent);
+
+    // Not a property write. The display group is its own family, which is why
+    // this went unfound among the property addresses for so long.
+    auto const framed = protocol::frameFeatureReport(protocol::displayCommand(static_cast<std::uint8_t>(percent)));
+
+    std::lock_guard<std::mutex> const lock { _writeMutex };
+
+    // Checked inside the lock, for the reason setKnobLedBrightness gives.
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    return _transport.sendFeatureReport(framed);
+}
+
+std::expected<void, DeviceError> Device::blankScreen()
+{
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    // Off is a sentinel in the same byte, not a brightness of zero. There is no
+    // matching wake: the deck comes back on its own when the glass is touched,
+    // and the capture of it doing so carries no host-to-device traffic at all.
+    auto const framed = protocol::frameFeatureReport(protocol::displayCommand(protocol::PanelOffLevel));
+
+    std::lock_guard<std::mutex> const lock { _writeMutex };
+
+    // Checked inside the lock, for the reason setKnobLedBrightness gives.
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    return _transport.sendFeatureReport(framed);
 }
 
 std::expected<void, DeviceError> Device::setKnobLedBrightness(int percent)
