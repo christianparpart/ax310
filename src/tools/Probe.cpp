@@ -163,6 +163,44 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
     return true;
 }
 
+/// Reads the optional trailing seconds argument the watching modes take.
+/// @param arguments The whole command line.
+/// @param fallback What to use when it was not given.
+/// @return The seconds, or nothing if what was given is not a sane duration.
+[[nodiscard]] std::optional<int> parseSeconds(std::span<char* const> arguments, unsigned fallback)
+{
+    auto const given = arguments.size() == 3 ? parseHex(arguments[2])
+                                             : std::optional<unsigned> { fallback };
+    if (!given || *given == 0 || *given > 600)
+        return std::nullopt;
+
+    return static_cast<int>(*given);
+}
+
+/// Sends the one command known to blank the deck's panel.
+///
+/// Exactly the bytes the vendor software sends, replayed. Nothing is composed
+/// here, because the grammar of this command group is not known -- see
+/// protocol::BlankPanelCommand.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @return Process status.
+int blankPanel(HidApiTransport& transport, IConsole& console)
+{
+    protocol::Payload payload {};
+    std::ranges::copy(protocol::BlankPanelCommand, payload.begin());
+
+    if (!transport.sendFeatureReport(protocol::frameFeatureReport(payload)))
+    {
+        writeErrorLine(console, "the write failed");
+        return EXIT_FAILURE;
+    }
+
+    writeLine(console, "sent 01 0a ff -- the panel should be dark; touch it to wake it");
+    return EXIT_SUCCESS;
+}
+
 /// What `--try` was asked to do.
 struct TryRequest
 {
@@ -668,6 +706,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --level <1|2> <knob> <00..14>  set one track's level in one mix (hex)");
     writeErrorLine(console, "  --meters [seconds]     watch the per-track meters, and report their peaks");
     writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
+    writeErrorLine(console, "  --panel-off            blank the panel; touch it to wake it again");
     writeErrorLine(console, "  --try <addr> <value> [seconds] [--fenced]");
     writeErrorLine(console, "                         write one byte, wait while you look at the deck, put it back");
     writeErrorLine(console, "");
@@ -709,16 +748,19 @@ int main(int argc, char* argv[])
         return EXIT_SUCCESS;
     }
 
+    if (command == "--panel-off" && argc == 2)
+        return blankPanel(transport, console);
+
     if (command == "--touches" && argc <= 3)
     {
-        auto const seconds = argc == 3 ? parseHex(arguments[2]) : std::optional<unsigned> { 20 };
-        if (!seconds || *seconds == 0 || *seconds > 600)
+        auto const seconds = parseSeconds(arguments, 20);
+        if (!seconds)
         {
             writeErrorLine(console, "--touches takes a number of seconds, 1 to 600");
             return EXIT_FAILURE;
         }
 
-        return watchTouches(transport, console, static_cast<int>(*seconds));
+        return watchTouches(transport, console, *seconds);
     }
 
     if (command == "--try" && argc >= 4 && argc <= 6)
@@ -737,14 +779,14 @@ int main(int argc, char* argv[])
 
     if (command == "--meters" && argc <= 3)
     {
-        auto const seconds = argc == 3 ? parseHex(arguments[2]) : std::optional<unsigned> { 10 };
-        if (!seconds || *seconds == 0 || *seconds > 600)
+        auto const seconds = parseSeconds(arguments, 10);
+        if (!seconds)
         {
             writeErrorLine(console, "--meters takes a number of seconds, 1 to 600");
             return EXIT_FAILURE;
         }
 
-        return watchMeters(transport, console, static_cast<int>(*seconds));
+        return watchMeters(transport, console, *seconds);
     }
 
     if (command == "--read" && argc == 4)

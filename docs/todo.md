@@ -150,10 +150,13 @@ captures name them.
   design ships as visibly inert — the deck panel reserves its tile so the row is
   not re-cut later, but it cannot be operated. One capture of that widget being
   toggled fills the gap and the tile simply lights up.
-- **Turn the IPS panel off and on.** The vendor software blanks it after a period
-  of inactivity, so there is a command for it and a capture of that setting being
-  toggled would find it. It is not simply stopping the frames: the deck holds the
-  last frame it was sent indefinitely. Worth having for its own sake — a deck left on a desk
+- ~~**Turn the IPS panel off.**~~ Captured: tapping the vendor's panel-off widget
+  sends `01 0a ff`, once, and an idle capture of the same length sends nothing at
+  all. `ax310_probe --panel-off` replays it. **Not yet confirmed on the hardware**
+  — the VM held the deck when it was found, so nobody has watched the panel go
+  dark in response to our own send.
+  Turning it back **on** needs no command: the deck wakes itself, and the capture
+  of doing so contains zero host-to-device traffic. Worth having for its own sake — a deck left on a desk
   overnight should not be showing a bright panel — and it may be the same register
   as brightness.
 - **Screen brightness** — the register is still unidentified; `setScreenBrightness`

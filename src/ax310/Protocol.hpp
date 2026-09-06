@@ -148,6 +148,29 @@ enum class CommandKind : std::uint8_t
 /// Second byte of a property command. The only group seen so far.
 inline constexpr std::uint8_t PropertyGroup = 0x10;
 
+/// A second command group, and so far it has exactly one member.
+///
+/// Captured with the vendor software: tapping its panel-off widget sends
+/// `01 0a ff` and nothing else, once. An idle capture of the same length sends no
+/// commands at all -- only screen frames -- and turning the panel back on sends
+/// nothing either, so the deck wakes itself and only the blanking is host-driven.
+///
+/// Whether `0x0a` is a group in the property family's sense, and whether `0xff`
+/// is an address or a value, is **not** established: the property grammar is
+/// `[kind][0x10][address][length][values]`, and `01 0a ff 00` does not fit it --
+/// a zero-length write to address `0xff` would be an odd thing to send. One
+/// observation cannot separate the readings, so the bytes are recorded as
+/// observed rather than parsed into fields that may not exist.
+inline constexpr std::uint8_t DisplayGroup = 0x0a;
+
+/// The exact bytes the vendor software sends to blank the panel.
+///
+/// Replayed verbatim rather than composed from a grammar, because the grammar is
+/// a guess and this is not: it is what was on the wire. Sending an unobserved
+/// variation -- `01 0a 00` for "on", say -- is the move that once wedged a deck,
+/// so there is no `panelOn` here. The deck wakes on its own.
+inline constexpr std::array<std::uint8_t, 3> BlankPanelCommand { 0x01, DisplayGroup, 0xff };
+
 /// Addresses that must not be written.
 ///
 /// Writing 0x01 to 0x16 wedged the deck: every subsequent read failed and it
