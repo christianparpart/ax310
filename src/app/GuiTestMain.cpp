@@ -29,9 +29,14 @@ int main(int argc, char* argv[])
     // real display; it skips itself where there is none, which includes CI.
     if (qEnvironmentVariableIsSet("AX310_TEST_NATIVE_BACKEND"))
     {
+        // Gated on a Wayland or X11 session specifically, rather than on "a
+        // display" in the abstract. The defect this run exists to catch was found
+        // on Wayland, and nobody has established that the same throwaway-RHI
+        // behaviour shows up under another windowing system -- so on Windows or
+        // macOS this skips rather than pretending to have checked something.
         if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") && qEnvironmentVariableIsEmpty("DISPLAY"))
         {
-            std::puts("no display, so the native-backend rendering tests are skipped");
+            std::puts("no Wayland or X11 session, so the native-backend rendering tests are skipped");
             return 4;
         }
     }
