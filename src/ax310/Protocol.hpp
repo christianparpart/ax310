@@ -148,6 +148,99 @@ enum class CommandKind : std::uint8_t
 /// Second byte of a property command. The only group seen so far.
 inline constexpr std::uint8_t PropertyGroup = 0x10;
 
+/// The four function buttons' colour, written one button at a time to `0xc0`.
+///
+/// Ten bytes, captured across fourteen records of the vendor software:
+///
+///     00  <button>  01  <r> <g> <b>  ??  ??  <lit>  80
+///
+///   * **byte 1 selects the button**, `0x3c` to `0x3f`. Turning all four off
+///     writes all four selectors in one burst, which is how the set is known to
+///     be exactly those and consecutive.
+///   * **bytes 3, 4 and 5 are red, green and blue**, proven by driving one button
+///     to each primary in turn: `ff 00 00`, `00 ff 00`, `00 00 ff`.
+///   * **byte 8 lights the button**: `0x1f` on, `0x00` off. "Off" writes black
+///     *and* clears this, so it is not merely a colour of zero.
+///   * **bytes 6 and 7 are not understood, and are not part of the colour.** Two
+///     records with the same button and the same colour, captured minutes apart,
+///     differ in them -- so they are not a checksum of this record and not
+///     derived from its contents. They carry something outside it.
+///
+/// There is no brightness field. The vendor scales the colour host-side and sends
+/// the result: its slider at minimum sent `0x19` on the lit channel and at
+/// maximum `0xff`. `0x19` is 25, the same floor its panel-brightness slider uses.
+///
+/// Which selector is which physical button is only half known: `0x3c` is the one
+/// the vendor's grid calls top-left and `0x3e` the one it calls bottom-right.
+/// `0x3d` and `0x3f` have not been assigned, and the deck's own physical order has
+/// never been verified either -- ButtonBits runs `0x08, 0x04, 0x02, 0x01`, which
+/// is reversed for no reason anybody has recorded.
+inline constexpr std::uint8_t ButtonColourAddress = 0xc0;
+
+/// Which selector addresses which button, indexed by Button.
+///
+/// The four selectors are consecutive but they are **not** in the enum's order.
+/// Captured one button at a time, all four:
+///
+///     0x3c  top-left        0x3d  top-right
+///     0x3f  bottom-left     0x3e  bottom-right
+///
+/// which is clockwise, where Button is row-major. `FirstButtonSelector + index`
+/// would light the wrong two, so the mapping is a table.
+///
+/// A caveat worth keeping: these are the positions the *vendor's* grid gives them.
+/// Whether Button's own enumerators match the deck's physical layout has never
+/// been verified -- ButtonBits runs 0x08, 0x04, 0x02, 0x01, reversed for no
+/// recorded reason -- so this maps a vendor label to a selector, and the last link
+/// to a physical button is still assumed. Pressing each button and watching which
+/// bit arrives would close it.
+inline constexpr std::array<std::uint8_t, ButtonCount> ButtonColourSelectors {
+    0x3c, // TopLeft
+    0x3d, // TopRight
+    0x3f, // BottomLeft
+    0x3e, // BottomRight
+};
+static_assert(rowsInEnumeratorOrder(AllButtons));
+
+/// @param button Which button.
+/// @return The selector byte its colour record carries.
+[[nodiscard]] constexpr std::uint8_t selectorFor(Button button) noexcept
+{
+    return ButtonColourSelectors[indexOf(button)];
+}
+
+/// Byte 8's two observed values.
+inline constexpr std::uint8_t ButtonLit = 0x1f;
+inline constexpr std::uint8_t ButtonDark = 0x00;
+
+/// Builds one button-colour record.
+///
+/// The bytes nobody has explained are set to values that were observed together
+/// with a lit button, rather than to zero, because replaying a shape that has been
+/// seen is the rule this project writes commands under.
+///
+/// @param selector Which button, from ButtonColourSelectors.
+/// @param red Red, 0 to 255.
+/// @param green Green.
+/// @param blue Blue.
+/// @param lit Whether the button is lit at all.
+/// @return The ten values to write to ButtonColourAddress.
+[[nodiscard]] constexpr std::array<std::uint8_t, 10> buttonColourRecord(
+    std::uint8_t selector, std::uint8_t red, std::uint8_t green, std::uint8_t blue,
+    bool lit) noexcept
+{
+    return { 0x00,
+             selector,
+             0x01,
+             red,
+             green,
+             blue,
+             0x00,
+             0x1d,
+             lit ? ButtonLit : ButtonDark,
+             0x80 };
+}
+
 /// The display command group: `[0x01][0x0a][level]`, and that is the whole of it.
 ///
 /// A second family beside the property one, which is why the screen's brightness

@@ -468,3 +468,45 @@ TEST_CASE("no address is both preserved and refused", "[protocol][spec]")
         CHECK(std::ranges::find(DangerousAddresses, row.address) == DangerousAddresses.end());
     }
 }
+
+TEST_CASE("the button colour selectors are not in the enum's order", "[protocol][buttons]")
+{
+    using namespace ax310::protocol;
+
+    // Captured one button at a time, all four. The selectors are consecutive but
+    // clockwise, where Button is row-major -- so FirstButtonSelector + index
+    // would light the wrong two, which is the whole reason this is a table.
+    CHECK(selectorFor(Button::TopLeft) == 0x3c);
+    CHECK(selectorFor(Button::TopRight) == 0x3d);
+    CHECK(selectorFor(Button::BottomRight) == 0x3e);
+    CHECK(selectorFor(Button::BottomLeft) == 0x3f);
+
+    // Every button has its own, and between them they cover the four the vendor
+    // writes when it turns all of them off.
+    auto seen = ButtonColourSelectors;
+    std::ranges::sort(seen);
+    CHECK(std::ranges::adjacent_find(seen) == seen.end());
+    CHECK(seen.front() == 0x3c);
+    CHECK(seen.back() == 0x3f);
+}
+
+TEST_CASE("a button colour record is the shape the vendor sends", "[protocol][buttons]")
+{
+    using namespace ax310::protocol;
+
+    // Byte for byte against a captured record: the vendor lighting the top-left
+    // button red sent 00 3c 01 ff 00 00 ?? ?? 1f 80, where the two unexplained
+    // bytes are not derived from the record and vary between captures.
+    auto const red = buttonColourRecord(selectorFor(Button::TopLeft), 0xff, 0x00, 0x00, true);
+    CHECK(red[1] == 0x3c);
+    CHECK(red[3] == 0xff);
+    CHECK(red[4] == 0x00);
+    CHECK(red[5] == 0x00);
+    CHECK(red[8] == ButtonLit);
+
+    // Off clears the enable as well as the colour: the vendor writes both, so a
+    // colour of zero on its own is not what it sends.
+    auto const dark = buttonColourRecord(selectorFor(Button::TopLeft), 0, 0, 0, false);
+    CHECK(dark[8] == ButtonDark);
+    CHECK(dark[3] == 0);
+}

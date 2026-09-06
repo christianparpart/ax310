@@ -347,3 +347,36 @@ effect.
 What would settle `0x23`: one capture of the gain slider at a **middle** position.
 If `0x1f` takes an intermediate value the gain reading is confirmed continuous,
 and whatever `0x23` does at neither extreme is the clue it has not given yet.
+
+## The function buttons' colour: 0xc0, ten bytes, one button at a time
+
+    00  <button>  01  <r> <g> <b>  ??  ??  <lit>  80
+
+Fourteen records of the vendor software, one action each.
+
+* **Byte 1 selects the button**, and the four are `0x3c` to `0x3f` -- known to be
+  exactly those because turning all four off writes all four in one burst.
+* **Bytes 3, 4, 5 are red, green, blue.** Driving one button to each primary gave
+  `ff 00 00`, `00 ff 00`, `00 00 ff`.
+* **Byte 8 lights it**: `0x1f` on, `0x00` off. Off writes black *and* clears this,
+  so a colour of zero on its own is not what the vendor sends.
+* **Bytes 6 and 7 are not understood and are not part of the colour.** Two records
+  with the same button and the same colour differ in them, so they are neither a
+  checksum of the record nor derived from it.
+
+**There is no brightness field.** The vendor scales the colour host-side: its
+slider at minimum sent `0x19` on the lit channel and at maximum `0xff`. `0x19` is
+25, the same floor its panel-brightness slider uses.
+
+**The selectors are clockwise where `Button` is row-major:**
+
+    0x3c  top-left       0x3d  top-right
+    0x3f  bottom-left    0x3e  bottom-right
+
+so `FirstButtonSelector + index` lights the wrong two and the mapping is a table.
+
+One link is still assumed. These are the positions the *vendor's* grid gives them,
+and whether `Button`'s enumerators match the deck's physical layout has never been
+verified -- `ButtonBits` runs `0x08, 0x04, 0x02, 0x01`, reversed for no recorded
+reason. Pressing each button and watching which bit arrives would close it, and
+needs no VM.

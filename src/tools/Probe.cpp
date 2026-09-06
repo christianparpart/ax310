@@ -163,6 +163,86 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
     return true;
 }
 
+/// What each button is called on the command line, indexed by Button. There is no
+/// nameOf(Button) in the driver -- the buttons carry no printed labels the way the
+/// knobs do, so a name for one is this tool's own convenience rather than a fact
+/// about the hardware.
+inline constexpr std::array<std::string_view, ButtonCount> ButtonAbbreviations {
+    "tl", "tr", "bl", "br"
+};
+
+/// @param name One of tl, tr, bl, br.
+/// @return The button it names, or nothing.
+[[nodiscard]] std::optional<Button> buttonFromName(std::string_view name)
+{
+    for (auto const button: AllButtons)
+        if (name == ButtonAbbreviations[indexOf(button)])
+            return button;
+
+    return std::nullopt;
+}
+
+/// Lights one function button, or turns it off.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param button Which button.
+/// @param red Red, 0 to 255.
+/// @param green Green.
+/// @param blue Blue.
+/// @return Process status.
+int setButtonColour(HidApiTransport& transport, IConsole& console, Button button,
+                    std::uint8_t red, std::uint8_t green, std::uint8_t blue)
+{
+    auto const lit = red != 0 || green != 0 || blue != 0;
+    auto const record =
+        protocol::buttonColourRecord(protocol::selectorFor(button), red, green, blue, lit);
+    auto const framed =
+        protocol::frameFeatureReport(protocol::setPropertyAt(protocol::ButtonColourAddress, record));
+
+    if (!transport.sendFeatureReport(framed))
+    {
+        writeErrorLine(console, "the write failed");
+        return EXIT_FAILURE;
+    }
+
+    writeLine(console,
+              "{} (selector 0x{:02x}) set to {:02x}{:02x}{:02x}{}",
+              ButtonAbbreviations[indexOf(button)],
+              protocol::selectorFor(button),
+              red,
+              green,
+              blue,
+              lit ? "" : ", which turns it off");
+    return EXIT_SUCCESS;
+}
+
+/// Parses and performs `--button <tl|tr|bl|br> <rr> <gg> <bb>`.
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param arguments The whole command line.
+/// @return Process status.
+int runButton(HidApiTransport& transport, IConsole& console, std::span<char* const> arguments)
+{
+    auto const which = buttonFromName(arguments[2]);
+    auto const red = parseHex(arguments[3]);
+    auto const green = parseHex(arguments[4]);
+    auto const blue = parseHex(arguments[5]);
+
+    if (!which || !red || !green || !blue || *red > 0xff || *green > 0xff || *blue > 0xff)
+    {
+        writeErrorLine(console, "usage: --button <tl|tr|bl|br> <rr> <gg> <bb>, all hex");
+        return EXIT_FAILURE;
+    }
+
+    return setButtonColour(transport,
+                           console,
+                           *which,
+                           static_cast<std::uint8_t>(*red),
+                           static_cast<std::uint8_t>(*green),
+                           static_cast<std::uint8_t>(*blue));
+}
+
 /// Reads the optional trailing seconds argument the watching modes take.
 /// @param arguments The whole command line.
 /// @param fallback What to use when it was not given.
@@ -201,6 +281,30 @@ int setPanel(HidApiTransport& transport, IConsole& console, std::uint8_t level)
 
     return EXIT_SUCCESS;
 }
+
+/// Parses and performs `--panel-brightness <percent>`.
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param arguments The whole command line.
+/// @return Process status.
+int runPanelBrightness(HidApiTransport& transport, IConsole& console,
+                       std::span<char* const> arguments)
+{
+    auto const percent = parseHex(arguments[2]);
+    if (!percent || *percent < static_cast<unsigned>(protocol::MinPanelBrightness)
+        || *percent > static_cast<unsigned>(protocol::MaxPanelBrightness))
+    {
+        writeErrorLine(console,
+                       "--panel-brightness takes {}..{}, in hex like the other commands; "
+                       "the vendor's own slider goes no dimmer",
+                       protocol::MinPanelBrightness,
+                       protocol::MaxPanelBrightness);
+        return EXIT_FAILURE;
+    }
+
+    return setPanel(transport, console, static_cast<std::uint8_t>(*percent));
+}
+
 
 /// What `--try` was asked to do.
 struct TryRequest
@@ -709,6 +813,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
     writeErrorLine(console, "  --panel-off            blank the panel; touch it to wake it again");
     writeErrorLine(console, "  --panel-brightness <19..64>  set panel brightness, percent in hex");
+    writeErrorLine(console, "  --button <tl|tr|bl|br> <rr> <gg> <bb>   light one function button");
     writeErrorLine(console, "  --try <addr> <value> [seconds] [--fenced]");
     writeErrorLine(console, "                         write one byte, wait while you look at the deck, put it back");
     writeErrorLine(console, "");
@@ -750,25 +855,14 @@ int main(int argc, char* argv[])
         return EXIT_SUCCESS;
     }
 
+    if (command == "--button" && argc == 6)
+        return runButton(transport, console, arguments);
+
     if (command == "--panel-off" && argc == 2)
         return setPanel(transport, console, protocol::PanelOffLevel);
 
     if (command == "--panel-brightness" && argc == 3)
-    {
-        auto const percent = parseHex(arguments[2]);
-        if (!percent || *percent < static_cast<unsigned>(protocol::MinPanelBrightness)
-            || *percent > static_cast<unsigned>(protocol::MaxPanelBrightness))
-        {
-            writeErrorLine(console,
-                           "--panel-brightness takes {}..{}, in hex like the other commands; "
-                           "the vendor's own slider goes no dimmer",
-                           protocol::MinPanelBrightness,
-                           protocol::MaxPanelBrightness);
-            return EXIT_FAILURE;
-        }
-
-        return setPanel(transport, console, static_cast<std::uint8_t>(*percent));
-    }
+        return runPanelBrightness(transport, console, arguments);
 
     if (command == "--touches" && argc <= 3)
     {
