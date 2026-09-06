@@ -86,3 +86,12 @@ panel indefinitely. The hedge carried the actual information — that somebody w
 guessing at a cause for something they had noticed — and dropping it turned their
 guess into the project's fact. Quote the observation, or ask what settles it, but
 do not promote it while removing the words that said it was uncertain.
+
+**Do not infer which gesture produced which contact.** Three claims about the
+touch flags byte were built on runs where the shape of the data was matched to
+gestures nobody had labelled — "these five single-report contacts must be the
+press-drags" — and each was wrong. They were taps. The measurement that settled
+it asked for *one* gesture, performed deliberately, and counted: 228 reports from
+a motionless hold, which is the opposite of what had been concluded. When an
+experiment needs to know what the hand was doing, the hand has to be told what to
+do and the run has to contain only that.

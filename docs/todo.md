@@ -162,8 +162,9 @@ captures name them.
   as brightness.
 - ~~**Screen brightness.**~~ `01 0a <percent>`, captured from the vendor's slider
   at both ends: `0x19` at minimum and `0x64` at maximum. `setScreenBrightness` is
-  implemented and clamps to that range. **Not yet confirmed on the hardware** —
-  the VM held the deck when it was captured.
+  implemented and clamps to that range, and **confirmed on the hardware**: the
+  panel dims and brightens, and the knob rings do not move, which is what
+  separates it from `0x1e`.
 - **Does a drag survive with audio playing?** `Device::dispatchEvent` treats the
   first non-touch report as the finger lifting. All-zero reports are dropped
   before that, and in silence every report interleaving a drag was all-zero — so

@@ -122,12 +122,12 @@ What the deck exposes:
   afterwards: the deck really does go quiet for the touch, so the rule reads a
   signal rather than getting lucky.
 
-  Two measurements of a *stationary* finger disagree, and neither is retracted.
-  One counted 45 consecutive touch reports across a 4.8-second hold, the
-  coordinate constant. A later one counted a single report per press followed by
-  silence — 370 reports carrying one `0x00 -> 0x00` transition. One motionless
-  five-second hold, counting reports, would settle it; until then nothing should
-  depend on a held finger repeating.
+  **A held finger repeats, at about eleven reports a second.** Two measurements
+  once disagreed about this; a deliberate motionless hold settled it, producing
+  228 reports from one contact with a constant coordinate. That agrees with the
+  older count of 45 across 4.8 seconds. The reading that said a still finger goes
+  unreported came from single-report contacts assumed to be holds, which were
+  taps.
 
   Byte 1 carries flags nobody has explained. It was read as a contact flag, and
   that was wrong in an expensive way: a finger held still reports `0x00` for the

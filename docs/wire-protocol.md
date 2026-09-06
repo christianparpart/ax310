@@ -73,6 +73,7 @@ A byte-addressed register space, reached with a feature report of `[0x01|0x81] 0
 | `0x15` | SelectedMix (00 creator, 01 audience) | yes, 1 byte | yes |
 | `0x1d` | SettingsTransaction (01 begin, 00 end) | no | yes |
 | `0x1e` | KnobLedBrightness | yes, 1 byte | yes |
+| `0x1f` | MicGain | yes, 1 byte | yes |
 | `0x21` | KnobLedSelect / mixer mode | yes, 1 byte | yes |
 | `0x27` | creator mix levels (base; +track) | yes, 7 bytes | yes |
 | `0x2a` | creator System level | no | yes |

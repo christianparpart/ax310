@@ -306,6 +306,16 @@ enum class Property : std::uint8_t
 
     /// Read with length 7 during init, never written, and it answers with one
     /// value rather than six.
+    /// Microphone preamp gain, `0x00` to `0x38`.
+    ///
+    /// The vendor's slider sends `0x00` at its floor and `0x38` at its ceiling.
+    /// **Confirmed on the hardware** rather than named from the capture: holding
+    /// it at each end while speaking moved the microphone's own meter, which is
+    /// pre-fader and so answers the preamp rather than the mix. That test was
+    /// chosen over listening because there is a second interface upstream of this
+    /// deck with its own compressor, and an ear cannot tell the two apart.
+    MicGain = 0x1f,
+
     KnobPropertyAt35 = 0x35,
 };
 
@@ -831,6 +841,7 @@ inline constexpr auto PropertyNames = std::to_array<WireName>({
     { .value = 0x15, .name = "SelectedMix (00 creator, 01 audience)" },
     { .value = 0x1d, .name = "SettingsTransaction (01 begin, 00 end)" },
     { .value = 0x1e, .name = "KnobLedBrightness" },
+    { .value = 0x1f, .name = "MicGain" },
     { .value = 0x21, .name = "KnobLedSelect / mixer mode" },
     { .value = 0x27, .name = "creator mix levels (base; +track)" },
     { .value = 0x2a, .name = "creator System level" },
@@ -1052,15 +1063,11 @@ inline constexpr std::uint8_t PhysicalButtonMask = [] {
 // nine such reports in one run and none in another. That is why treating the
 // first non-ordinary report as the lift works.
 //
-// **Two measurements of a stationary finger disagree and neither has been
-// retracted.** One holds that a 4.8-second hold produced 45 consecutive
-// screen-touch reports with the coordinate constant, about nine a second. The
-// other, taken later with --touches, holds that five separate presses each
-// produced exactly one report and then silence long enough to look like a lift:
-// 370 reports carried a single 0x00 -> 0x00 transition. Both were measured on
-// this deck. What would settle it is one deliberate motionless hold of about five
-// seconds, counting the reports -- and until somebody does that, code should not
-// rely on a held finger repeating.
+// **A held finger repeats, at about eleven reports a second.** Measured twice: 45
+// consecutive reports across a 4.8-second hold, and later 228 reports from one
+// deliberate motionless contact, the coordinate constant in both. A reading that
+// said a stationary finger goes unreported was taken from single-report contacts
+// assumed to be holds; they were taps, and it has been withdrawn.
 //
 // Values seen with a finger down: 0x00, 0x10, 0x14, 0x18, 0x1c, 0x48, 0x49.
 //

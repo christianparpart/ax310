@@ -157,8 +157,8 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |
 | Single ↔ Dual Mix | `0x21` (`0x80` single / `0x00` dual), `0x22` | ◐ captured, **not driven** — `0x21` also selects which rings light and which it is doing is unsettled |
 | Mic monitoring on/off | `0x27`, the creator block's Mic slot | ✅ captured and driven — the vendor's widget writes the microphone's creator-mix level and nothing else; there was never a separate register |
-| Microphone type | host command | ❌ — a three-way selector, not a phantom-power toggle: XLR (+0 V), XLR + phantom (+48 V), 6.3 mm (+3 V) |
-| Mic gain | `0x1f`, with `0x23` alongside | ◐ one capture: a gain-up drag sent `0x1f = 0x38` and `0x23 = 0x00`; the range and what `0x23` does are unknown |
+| Phantom power | `0x20` bit 0 | ◐ captured — `0x0f` with phantom, `0x0e` without; XLR and 6.3 mm are indistinguishable on the wire, so the deck likely senses the connector. Untested: it means putting +48 V on whatever is plugged in |
+| Mic gain | `0x1f` | ✅ `0x00` to `0x38`, confirmed on the hardware against the microphone's own meter |
 | Reverb | `0x85` enable, `0x94` body | ✅ five sliders driven from both screens |
 | Compressor | `0x9b` enable, `0x9f` body | ◐ threshold and ratio driven; attack, release, output gain not located |
 | Equaliser | `0xa3` bands | ◐ six writable bands decoded; its enable is a guess (`0x87`/`0x88`/`0x9c`), untested |

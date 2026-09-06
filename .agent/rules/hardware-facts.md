@@ -228,15 +228,20 @@ deliberate flicks and five deliberate press-drags produced no `0x14` at all. The
 died -- counter, accumulator, gesture class -- and it is left unexplained rather
 than given a fourth.
 
-**What the same run did establish: the deck goes silent while a finger is still.**
-Each of the five press-and-holds produced exactly one report and then nothing;
-across 370 reports there was a single `0x00 -> 0x00` transition. A stationary
-finger is not reported at all, which is why ten gestures came back as fifteen
-contacts -- the hold splits one physical touch into two bursts of reports.
+~~What the same run did establish: the deck goes silent while a finger is still.~~
+**Withdrawn, and the opposite is true.** A deliberate motionless hold, asked for
+and performed as one, produced **228 reports from a single contact** -- about
+eleven a second, with one of them carrying any movement. That agrees with the
+older measurement of 45 reports across a 4.8-second hold and settles the conflict
+in its favour: a held finger repeats, and `Device.cpp` has said so all along.
 
-That contradicts `Device.cpp`, which says "a held finger repeats its position five
-times a second" and dedupes on it. It also raises a question that matters more
-than the flags byte: `Device::dispatchEvent` treats the first **non-touch** report
+The single-report contacts that produced the retracted claim were brief taps, not
+holds. Nobody said which gesture made which contact and the run was not designed
+to say; the shape was read out of the numbers and the reading was wrong. This is
+the third claim in one session promoted from data whose provenance was assumed --
+see process-traps.md.
+
+The question it raised is still worth having asked: `Device::dispatchEvent` treats the first **non-touch** report
 as the finger lifting, and the deck streams meter reports continuously. If those
 interleave with touch reports, every drag is delivered as press, release, press.
 ~~Measured: 9 of them across 15 gestures, so a drag really is delivered as press,
@@ -325,10 +330,19 @@ Also unexplained: switching to phantom sent gain `0x00` when the gain had been
 +48 V would be a sensible thing for the vendor to do, but that is a guess about
 intent and not a measurement.
 
-**None of these are named in `Protocol.hpp` yet, deliberately.** `0x1e` was named
-for screen brightness on capture evidence at least this strong and the hardware
-disagreed. What settles it: with the deck on the host, `--try 1f 00` and
-`--try 1f 38` while listening to the microphone.
+**`0x1f` is confirmed and named `MicGain`.** Held at each end while speaking, the
+microphone's own meter followed -- and the meter was the right instrument rather
+than an ear, because there is a second interface upstream of this deck with its
+own compressor which an ear cannot separate from the deck's preamp.
+
+`0x20` is **not** confirmed. Its phantom-power reading rests on the captures
+alone, and testing it means putting +48 V on whatever microphone is connected,
+which is not something to do casually.
+
+`0x23` was written with both of its observed values and **nothing observable
+happened** -- no change to the microphone, the rings, the panel or the mix. It
+stays unnamed, and it is now a register with two known values and no known
+effect.
 
 What would settle `0x23`: one capture of the gain slider at a **middle** position.
 If `0x1f` takes an intermediate value the gain reading is confirmed continuous,
