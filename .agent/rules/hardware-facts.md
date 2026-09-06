@@ -222,10 +222,25 @@ press-then-drag against immediate flick -- the slow contact dwelled 471 ms befor
 moving and the fast one 47 ms. **Two contacts cannot establish that**, and it is
 recorded here as the surviving guess rather than a finding.
 
-What would settle it: ten or more contacts of two deliberate kinds, five of each,
-alternating -- an immediate flick with no pause, and a press held about a second
-before dragging. If the flicks all report one value and the press-drags the other,
-that is the answer; if they do not, the bit means something else.
+That was measured too, and **refuted**: fifteen contacts containing five
+deliberate flicks and five deliberate press-drags produced no `0x14` at all. The
+`0x08` bit is not flick against press-drag. Three readings of that bit have now
+died -- counter, accumulator, gesture class -- and it is left unexplained rather
+than given a fourth.
+
+**What the same run did establish: the deck goes silent while a finger is still.**
+Each of the five press-and-holds produced exactly one report and then nothing;
+across 370 reports there was a single `0x00 -> 0x00` transition. A stationary
+finger is not reported at all, which is why ten gestures came back as fifteen
+contacts -- the hold splits one physical touch into two bursts of reports.
+
+That contradicts `Device.cpp`, which says "a held finger repeats its position five
+times a second" and dedupes on it. It also raises a question that matters more
+than the flags byte: `Device::dispatchEvent` treats the first **non-touch** report
+as the finger lifting, and the deck streams meter reports continuously. If those
+interleave with touch reports, every drag is delivered as press, release, press.
+`--touches` now counts non-touch reports arriving mid-gesture, which settles it
+either way.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 They are **not** the two-finger case: the deck's owner reports the panel simply

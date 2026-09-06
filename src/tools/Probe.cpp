@@ -304,6 +304,75 @@ int tryRegister(HidApiTransport& transport, IConsole& console, std::uint8_t addr
     return EXIT_SUCCESS;
 }
 
+/// Everything one --touches run measured.
+struct TouchSummary
+{
+    std::size_t touches = 0;
+    std::size_t contacts = 0;
+    std::size_t othersBetween = 0;
+    std::size_t gesturesWithOthers = 0;
+    std::string contactLog;
+    std::map<std::uint8_t, std::size_t> seen;
+    std::map<std::uint8_t, std::size_t> startsAContact;
+    std::map<std::uint8_t, std::size_t> movedWith;
+    std::map<std::uint8_t, int> travelWith;
+    std::map<std::uint8_t, int> furthestWith;
+    std::map<std::pair<std::uint8_t, std::uint8_t>, std::size_t> followedBy;
+};
+
+/// Prints what a run measured. Separate from the loop that measures it, so
+/// neither has to be read while thinking about the other.
+/// @param console Where it goes.
+/// @param run What was measured.
+void reportTouchSummary(IConsole& console, TouchSummary const& run)
+{
+    writeLine(console, "");
+    writeLine(console, "{} touch reports across {} contacts.", run.touches, run.contacts);
+    writeLine(console, "");
+    writeLine(console, "How often each value appeared, and how often it began a contact:");
+    for (auto const& [flags, count]: run.seen)
+        writeLine(console,
+                  "  0x{:02x}  {:>4} times, {:>4} of them first",
+                  flags,
+                  count,
+                  run.startsAContact.contains(flags) ? run.startsAContact.at(flags) : 0);
+
+    writeLine(console, "");
+    writeLine(console, "Each contact, and where along it the value changed:");
+    writeLine(console, "{}", run.contactLog);
+
+    writeLine(console, "");
+    writeLine(console, "And how much the finger was moving when each value was reported:");
+    writeLine(console, "  {:>5}  {:>10}  {:>10}  {:>10}", "flags", "moving", "mean step", "worst step");
+    for (auto const& [flags, count]: run.seen)
+    {
+        auto const moving = run.movedWith.contains(flags) ? run.movedWith.at(flags) : 0;
+        auto const travel = run.travelWith.contains(flags) ? run.travelWith.at(flags) : 0;
+        writeLine(console,
+                  "   0x{:02x}  {:>4} of {:<4}  {:>10}  {:>10}",
+                  flags,
+                  moving,
+                  count,
+                  count > 0 ? travel / static_cast<int>(count) : 0,
+                  run.furthestWith.contains(flags) ? run.furthestWith.at(flags) : 0);
+    }
+
+    writeLine(console, "");
+    writeLine(console, "Which value follows which, within one contact:");
+    for (auto const& [pair, count]: run.followedBy)
+        writeLine(console, "  0x{:02x} -> 0x{:02x}  {:>4}", pair.first, pair.second, count);
+
+    writeLine(console, "");
+    writeLine(console,
+              "Non-touch reports arriving mid-gesture: {} of them, on {} occasions.",
+              run.othersBetween,
+              run.gesturesWithOthers);
+    writeLine(console,
+              "Device treats the first of those as the finger lifting, so anything above "
+              "zero means a drag is reported as press/release/press.");
+
+}
+
 /// Prints every screen touch with the byte nobody has explained, and then the
 /// thing a tally cannot show: which value follows which.
 ///
@@ -344,6 +413,13 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
     int travelInContact = 0;
     auto contactBegan = Clock::now();
 
+    // Every report that is not a touch, counted between touches. Device treats
+    // the first of these as the finger lifting, so if they arrive mid-gesture the
+    // driver is reporting a release while the finger is still down.
+    std::size_t othersBetween = 0;
+    std::size_t gesturesWithOthers = 0;
+    std::size_t othersSinceTouch = 0;
+
     std::size_t touches = 0;
     std::size_t contacts = 0;
     std::optional<std::uint8_t> previousFlags;
@@ -370,8 +446,23 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
             continue;
 
         auto const payload = protocol::reportPayload(std::span { buffer }.first(*bytesRead));
-        if (payload.empty() || payload[protocol::EventTypeOffset] != protocol::ScreenTouchEventType)
+        if (payload.empty())
             continue;
+
+        if (payload[protocol::EventTypeOffset] != protocol::ScreenTouchEventType)
+        {
+            // Only interesting once a finger is down and before it has lifted.
+            if (previousFlags.has_value() && (Clock::now() - previousAt) <= ContactGap)
+                ++othersSinceTouch;
+            continue;
+        }
+
+        if (othersSinceTouch > 0)
+        {
+            othersBetween += othersSinceTouch;
+            ++gesturesWithOthers;
+            othersSinceTouch = 0;
+        }
 
         auto const report = protocol::decodeReport(payload);
         auto const now = Clock::now();
@@ -435,41 +526,18 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
         previousAt = now;
     }
 
-    writeLine(console, "");
-    writeLine(console, "{} touch reports across {} contacts.", touches, contacts);
-    writeLine(console, "");
-    writeLine(console, "How often each value appeared, and how often it began a contact:");
-    for (auto const& [flags, count]: seen)
-        writeLine(console,
-                  "  0x{:02x}  {:>4} times, {:>4} of them first",
-                  flags,
-                  count,
-                  startsAContact.contains(flags) ? startsAContact.at(flags) : 0);
-
-    writeLine(console, "");
-    writeLine(console, "Each contact, and where along it the value changed:");
-    writeLine(console, "{}   [{} reports, {} px]", contactLog, closingReports, closingTravel);
-
-    writeLine(console, "");
-    writeLine(console, "And how much the finger was moving when each value was reported:");
-    writeLine(console, "  {:>5}  {:>10}  {:>10}  {:>10}", "flags", "moving", "mean step", "worst step");
-    for (auto const& [flags, count]: seen)
-    {
-        auto const moving = movedWith.contains(flags) ? movedWith.at(flags) : 0;
-        auto const travel = travelWith.contains(flags) ? travelWith.at(flags) : 0;
-        writeLine(console,
-                  "   0x{:02x}  {:>4} of {:<4}  {:>10}  {:>10}",
-                  flags,
-                  moving,
-                  count,
-                  count > 0 ? travel / static_cast<int>(count) : 0,
-                  furthestWith.contains(flags) ? furthestWith.at(flags) : 0);
-    }
-
-    writeLine(console, "");
-    writeLine(console, "Which value follows which, within one contact:");
-    for (auto const& [pair, count]: followedBy)
-        writeLine(console, "  0x{:02x} -> 0x{:02x}  {:>4}", pair.first, pair.second, count);
+    reportTouchSummary(console,
+                       { .touches = touches,
+                         .contacts = contacts,
+                         .othersBetween = othersBetween,
+                         .gesturesWithOthers = gesturesWithOthers,
+                         .contactLog = contactLog + std::format("   [{} reports, {} px]", closingReports, closingTravel),
+                         .seen = seen,
+                         .startsAContact = startsAContact,
+                         .movedWith = movedWith,
+                         .travelWith = travelWith,
+                         .furthestWith = furthestWith,
+                         .followedBy = followedBy });
 
     if (touches == 0)
         writeErrorLine(console, "nothing arrived -- is another program holding the deck?");
