@@ -182,9 +182,14 @@ captures name them.
 - ~~**Surround brightness reaches the strip twice.**~~ It does not. Byte 4 is the
   frequency and nothing else; brightness is applied to the colour, `0x19` to
   `0xff`, in every mode and on every light this device has.
-- **Byte 4 in solid mode** — carries `0x7d`, `0xcd`, `0xf8` or `0xfb`, changes
-  mid-drag, and is not brightness. A capture in solid where only the hue moves
-  would say what it tracks. Not guessed at again until then.
+- ~~**Byte 4 in solid mode.**~~ Not a parameter. Ten presets sent `0xfb` for all
+  ten colours, and both ends of the brightness slider sent `0xfb` too. Stale
+  struct memory, like bytes 6-7 of a `0xc0` record.
+- **The surround record's channel order is unverified** — every test run against
+  it so far has been symmetric between R-G-B and B-G-R (green, white, and a pulse
+  watched only for whether it pulsed). `ax310_probe --surround solid f8 ff 00 00`
+  and looking at the strip settles it. The knob record is *not* affected: three
+  colours there gave three distinct patterns.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries
   no mix, so setting the audience mix's colour means selecting it, writing, and
   selecting back. Whether the deck keeps both colours or the driver must is

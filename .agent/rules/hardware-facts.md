@@ -449,15 +449,39 @@ dragged slider cannot distinguish a line from a gentle curve.
 The dark channels stay at zero when dimmed; the floor is not a colour shift, or
 a dimmed red would wash out to pink.
 
-**Byte 4 in solid mode is unexplained.** It carries something -- `0x7d`, `0xcd`,
-`0xf8` and `0xfb` have all been seen, and it changed from `0xcd` to `0xfb` in the
-middle of a drag with no other command written -- but it is not brightness.
+**Byte 4 in solid mode is not a parameter.** It carries `0x7d`, `0xcd`, `0xf8` or
+`0xfb`, and it is neither of the two things it could have been:
 
-An earlier version of this entry said it was, on a single capture in which
-brightness and byte 4 moved together. Two things moving in one capture is not one
-causing the other, and it took three later captures to notice: `b100` and `b0`,
-the two ends of the slider, both sent `0xfb`. What would settle what byte 4 *is*:
-a capture in solid mode where only the hue changes, brightness untouched.
+* Not brightness. `b100` and `b0`, the two ends of the slider, both sent `0xfb`
+  while the colour travelled the whole distance.
+* Not colour. Clicking through all ten of the vendor's presets sent `0xfb` for
+  every one of them, twenty-two records with ten different colours in them.
+
+It moved only transiently, from `0xcd` to `0xfb` in the middle of a drag with
+nothing else written. Treated as stale struct memory, the same as bytes 6 and 7 of
+a `0xc0` record, and not read again.
+
+An earlier version of this entry said byte 4 was brightness in solid, on a single
+capture in which brightness and byte 4 happened to move together. Two things
+moving in one capture is not one causing the other.
+
+## The vendor's ten surround presets
+
+Clicked one at a time, in the order the palette lays them out, with the eleventh
+click returning to the first and reproducing its bytes exactly:
+
+    c4 00 00    c4 5f 00    00 c4 00    00 c4 5f    00 c4 c4
+    00 62 c4    00 00 c4    5f 00 c4    c4 00 c4    c4 60 c4
+
+A hue wheel, and the presets peak at `0xc4` rather than `0xff` -- the brightness
+slider scales them up to `0xff`, which is the same rule as everywhere else.
+
+**Which end of the wheel is which is not settled.** Read as red-green-blue the
+sequence runs red to green to blue; read as blue-green-red it is the same wheel
+walked backwards. Every test so far has been symmetric between the two: green is
+`00 c4 00` either way, white is white, and the one asymmetric hardware test that
+was run -- a "blue" pulse -- was only ever watched for whether it pulsed. Driving
+`ff 00 00` at the strip and looking at it settles it in one command.
 
 All six modes have since been driven on hardware with `ax310_probe --surround`,
 along with `off`, so the mode table and the colour bytes are confirmed and not
