@@ -476,18 +476,24 @@ click returning to the first and reproducing its bytes exactly:
 A hue wheel, and the presets peak at `0xc4` rather than `0xff` -- the brightness
 slider scales them up to `0xff`, which is the same rule as everywhere else.
 
-**Which end of the wheel is which is not settled.** Read as red-green-blue the
-sequence runs red to green to blue; read as blue-green-red it is the same wheel
-walked backwards. Every test so far has been symmetric between the two: green is
-`00 c4 00` either way, white is white, and the one asymmetric hardware test that
-was run -- a "blue" pulse -- was only ever watched for whether it pulsed. Driving
-`ff 00 00` at the strip and looking at it settles it in one command.
+**The order is red-green-blue**, settled on hardware: `ff 00 00` driven at the
+strip is red. So the palette above starts at red and runs forward through the
+wheel.
+
+It is worth recording how nearly this was missed. Nothing had tested it. Every
+check that had been run was symmetric between red-green-blue and blue-green-red --
+green is `00 c4 00` in either reading, white is white either way, and the one
+asymmetric case that reached hardware was a pulse watched for *whether* it pulsed
+rather than for its colour. A hue wheel read backwards is still a hue wheel, so
+the ten presets could not settle it either. One command and one look did.
 
 All six modes have since been driven on hardware with `ax310_probe --surround`,
 along with `off`, so the mode table and the colour bytes are confirmed and not
 merely replayed.
 
-A note on how the first sweep read: the mode captures were taken at the vendor's
-default colour, which is blue, not the red the capture plan asked for. Reading
-`00 00 ff` as red-in-some-other-byte-order would have inverted the channel order
-for every record here. Green settled it.
+A note on the mode sweep's colour. Those records carry `00 00 ff`, which with the
+confirmed order is blue, though the capture plan had asked for red. Nothing drawn
+from them depends on it -- they were read for the mode selector in byte 1, which
+is the same whatever colour is alongside it -- but it is the reason the channel
+order stayed unverified for as long as it did, and the reason to state a record's
+colour from the bytes rather than from what was meant to be clicked.

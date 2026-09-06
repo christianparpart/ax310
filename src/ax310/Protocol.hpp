@@ -376,6 +376,10 @@ inline constexpr std::uint8_t MaxLightChannel = 0xff;
 /// @param mode Which animation.
 /// @param frequency How fast it animates. Ignored by the deck when the mode does
 ///        not animate; pass SolidFrequencyFiller there.
+/// The channel order is red, green, blue, confirmed by driving `ff 00 00` at the
+/// strip and looking at it. Nothing in the captures could settle it: the vendor's
+/// ten presets are a hue wheel, and a hue wheel read backwards is still one.
+///
 /// @param red Red, 0 to 255. Ignored by the deck in the hue-cycling modes.
 /// @param green Green.
 /// @param blue Blue.

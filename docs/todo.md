@@ -185,11 +185,8 @@ captures name them.
 - ~~**Byte 4 in solid mode.**~~ Not a parameter. Ten presets sent `0xfb` for all
   ten colours, and both ends of the brightness slider sent `0xfb` too. Stale
   struct memory, like bytes 6-7 of a `0xc0` record.
-- **The surround record's channel order is unverified** — every test run against
-  it so far has been symmetric between R-G-B and B-G-R (green, white, and a pulse
-  watched only for whether it pulsed). `ax310_probe --surround solid f8 ff 00 00`
-  and looking at the strip settles it. The knob record is *not* affected: three
-  colours there gave three distinct patterns.
+- ~~**The surround record's channel order is unverified.**~~ Settled on hardware:
+  `ff 00 00` is red, so bytes 7-9 are R-G-B as written.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries
   no mix, so setting the audience mix's colour means selecting it, writing, and
   selecting back. Whether the deck keeps both colours or the driver must is
