@@ -22,9 +22,22 @@ function(ax310_place_runtime_dlls target)
         return()
     endif()
 
+    # Each executable gets a directory of its own first, and that is not tidiness.
+    # Three executables live in src/ and each copies the same Qt DLLs beside
+    # itself; Ninja builds them in parallel and `cmake -E copy` takes no lock, so
+    # two of them writing Qt6Core.dll to the same path at the same moment is a
+    # sharing violation and the build fails. It is a race, so it passed for
+    # several runs before it did not -- which is the worst way for one to behave.
+    #
+    # Separate destinations make it impossible rather than unlikely. Everything
+    # that refers to these binaries goes through $<TARGET_FILE:...> or the target
+    # name, so nothing else has to know where they moved.
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${target}")
+
     add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy -t "$<TARGET_FILE_DIR:${target}>"
-                "$<TARGET_RUNTIME_DLLS:${target}>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_RUNTIME_DLLS:${target}>" "$<TARGET_FILE_DIR:${target}>"
         COMMAND_EXPAND_LISTS
         VERBATIM)
 endfunction()
