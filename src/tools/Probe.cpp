@@ -339,7 +339,8 @@ int runSurround(HidApiTransport& transport, IConsole& console, std::span<char* c
         writeErrorLine(console,
                        "usage: --surround off, or --surround "
                        "<solid|pulsing|blinking|pulsing-rgb|blinking-rgb|scrolling-rgb> "
-                       "<rate> <rr> <gg> <bb>, all hex");
+                       "<freq> <rr> <gg> <bb>, all hex. Solid ignores freq; scale the "
+                       "colour to dim, there is no brightness field");
         return EXIT_FAILURE;
     }
 
@@ -353,9 +354,9 @@ int runSurround(HidApiTransport& transport, IConsole& console, std::span<char* c
         console,
         protocol::SurroundAddress,
         record,
-        std::format("surround set to {} at rate 0x{:02x}{}",
+        std::format("surround set to {}{}{}",
                     nameOf(*mode),
-                    *rate,
+                    isAnimated(*mode) ? std::format(" at frequency 0x{:02x}", *rate) : "",
                     cyclesHues(*mode) ? ", which cycles hues and ignores the colour" : ""));
 }
 
@@ -932,7 +933,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --button <tl|tr|bl|br> <rr> <gg> <bb>   light one function button");
     writeErrorLine(console, "  --knob-colour <rr> <gg> <bb>            colour the selected mix's rings");
     writeErrorLine(console, "  --surround off                          turn the surround strip off");
-    writeErrorLine(console, "  --surround <mode> <rate> <rr> <gg> <bb> drive the surround strip");
+    writeErrorLine(console, "  --surround <mode> <freq> <rr> <gg> <bb> drive the surround strip");
     writeErrorLine(console, "  --try <addr> <value> [seconds] [--fenced]");
     writeErrorLine(console, "                         write one byte, wait while you look at the deck, put it back");
     writeErrorLine(console, "");

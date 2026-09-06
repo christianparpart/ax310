@@ -187,16 +187,18 @@ Address `0xe0` drives the surround light strip:
 01 <mode> 01 20 <rate> 00 00 <r> <g> <b>
 ```
 
-| Mode | Selector | Rate means | Colour used |
+| Mode | Selector | Frequency read | Colour used |
 | --- | --- | --- | --- |
-| Solid | `0x34` | brightness | yes |
-| Pulsing | `0x38` | frequency | yes |
-| Blinking | `0x2c` | frequency | yes |
-| Pulsing RGB | `0x28` | frequency | no, it cycles hues |
-| Blinking RGB | `0x30` | frequency | no, it cycles hues |
-| Scrolling RGB | `0x24` | frequency | no, it cycles hues |
+| Solid | `0x34` | no, and what it carries is unexplained | yes |
+| Pulsing | `0x38` | yes | yes |
+| Blinking | `0x2c` | yes | yes |
+| Pulsing RGB | `0x28` | yes | no, it cycles hues |
+| Blinking RGB | `0x30` | yes | no, it cycles hues |
+| Scrolling RGB | `0x24` | yes | no, it cycles hues |
 
 The selectors are four apart rather than one; what the low two bits are for is unknown, and every captured record has them clear. The frequency slider's ends gave `0x01` and `0x0a`.
+
+**No light on this device has a brightness field.** Brightness is applied to the colour before it is sent, spanning `0x19` to `0xff` per channel -- on the strip in every mode, and on the buttons and rings the same way.
 
 There is no mode for darkness: the vendor's "off" sends Solid with a black colour. Nothing restores this address on connect, so a strip left black stays black across a replug and looks exactly like one that does not work.
 

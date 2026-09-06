@@ -313,6 +313,46 @@ static_assert(rowsInEnumeratorOrder(AllSurroundModes));
 inline constexpr std::uint8_t MinSurroundFrequency = 0x01;
 inline constexpr std::uint8_t MaxSurroundFrequency = 0x0a;
 
+/// What the vendor puts in the frequency byte when the mode does not animate.
+///
+/// Solid has no frequency, and the byte still carries something: `0x7d`, `0xcd`,
+/// `0xf8` and `0xfb` have all been seen there, changing mid-drag with nothing else
+/// written. It is **not** brightness -- captures at each end of the brightness
+/// slider both sent `0xfb` while the colour moved the whole way -- and what it is
+/// has not been determined. This is one of the resting values, sent because
+/// replaying a shape that has been observed is the rule this project writes under.
+inline constexpr std::uint8_t SolidFrequencyFiller = 0xf8;
+
+/// The range a colour channel spans as the vendor's brightness slider moves.
+///
+/// The deck has no brightness field anywhere: brightness is applied to the colour
+/// before it is sent, on all three kinds of light. `0x19` is the floor for the
+/// function buttons and for the strip alike, in solid and in pulsing.
+inline constexpr std::uint8_t MinLightChannel = 0x19;
+inline constexpr std::uint8_t MaxLightChannel = 0xff;
+
+/// Applies a brightness to one colour channel the way the vendor does.
+///
+/// Straight-line between the two ends, which fits the three points measured
+/// (`0x19` at the bottom, `0xff` at the top, and roughly `0x85` at a slider left
+/// near the middle by hand). A hand-placed midpoint cannot distinguish a line from
+/// a gentle curve, so this is the simplest reading of the evidence rather than a
+/// proven encoding.
+///
+/// @param channel The channel at full brightness, 0 to 255.
+/// @param percent Brightness, 0 to 100.
+/// @return The channel to send.
+[[nodiscard]] constexpr std::uint8_t scaledChannel(std::uint8_t channel, int percent) noexcept
+{
+    if (channel == 0)
+        return 0; // An unlit channel stays unlit; the floor is not a colour shift.
+
+    auto const clamped = std::clamp(percent, 0, 100);
+    auto const span = int { MaxLightChannel } - int { MinLightChannel };
+    auto const ceiling = int { MinLightChannel } + ((span * clamped) / 100);
+    return static_cast<std::uint8_t>((int { channel } * ceiling) / int { MaxLightChannel });
+}
+
 /// Builds one surround-strip record.
 ///
 /// The layout, from thirteen captures covering all seven of the vendor's modes and
@@ -320,31 +360,31 @@ inline constexpr std::uint8_t MaxSurroundFrequency = 0x0a;
 ///
 ///     01 <mode> 01 20 <rate> 00 00 <r> <g> <b>
 ///
-/// `rate` is one slot with two meanings, chosen by the mode: a frequency in the
-/// animated modes, where the slider's ends gave `0x01` and `0x0a`, and a brightness
-/// in Solid, where the same byte moved between `0xf8` and `0x7d`. That is why this
-/// takes an unnamed byte rather than a frequency -- one parameter that means two
-/// things is what the wire has, and naming it for one of them would be a lie in the
-/// other mode.
+/// Byte 4 is the frequency, and **only** in the modes that animate. Holding the
+/// frequency slider still while dragging brightness from one end to the other left
+/// it at `0x0a` across every record, so nothing else rides in it.
 ///
-/// Brightness is folded into the colour as well as into `rate`: dimming a solid
-/// blue moved the blue channel from `0xfe` to `0xa0` in the same record that moved
-/// `rate`. The exact curve between the two is not known, so a caller that wants a
-/// dimmer strip should scale the colour it passes and not rely on `rate` alone.
-/// The lowest channel value the vendor was seen to send is `0x19`, the same floor
-/// its button colours have.
+/// **There is no brightness field.** Brightness is applied to the colour before it
+/// is sent -- `0xff` down to `0x19` as the slider travels -- in solid exactly as in
+/// pulsing, and on the buttons and rings the same way. Use scaledChannel().
+///
+/// An earlier reading of these bytes had byte 4 carrying brightness in Solid. It
+/// came from one capture in which brightness and byte 4 moved together, and three
+/// later captures refuted it: at both ends of the brightness slider byte 4 was
+/// `0xfb` while the colour moved the whole way. See SolidFrequencyFiller.
 ///
 /// @param mode Which animation.
-/// @param rate Frequency when the mode animates, brightness when it is Solid.
+/// @param frequency How fast it animates. Ignored by the deck when the mode does
+///        not animate; pass SolidFrequencyFiller there.
 /// @param red Red, 0 to 255. Ignored by the deck in the hue-cycling modes.
 /// @param green Green.
 /// @param blue Blue.
 /// @return The ten values to write to SurroundAddress.
 [[nodiscard]] constexpr std::array<std::uint8_t, 10> surroundRecord(
-    SurroundMode mode, std::uint8_t rate, std::uint8_t red, std::uint8_t green,
+    SurroundMode mode, std::uint8_t frequency, std::uint8_t red, std::uint8_t green,
     std::uint8_t blue) noexcept
 {
-    return { 0x01, selectorFor(mode), 0x01, 0x20, rate, 0x00, 0x00, red, green, blue };
+    return { 0x01, selectorFor(mode), 0x01, 0x20, frequency, 0x00, 0x00, red, green, blue };
 }
 
 /// Builds the record that turns the strip off.
@@ -355,7 +395,7 @@ inline constexpr std::uint8_t MaxSurroundFrequency = 0x0a;
 /// @return The ten values to write to SurroundAddress.
 [[nodiscard]] constexpr std::array<std::uint8_t, 10> surroundOffRecord() noexcept
 {
-    return surroundRecord(SurroundMode::Solid, 0xf8, 0x00, 0x00, 0x00);
+    return surroundRecord(SurroundMode::Solid, SolidFrequencyFiller, 0x00, 0x00, 0x00);
 }
 
 /// The display command group: `[0x01][0x0a][level]`, and that is the whole of it.

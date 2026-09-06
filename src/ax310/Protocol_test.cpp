@@ -564,8 +564,7 @@ TEST_CASE("a surround record is the shape the vendor sends", "[protocol][surroun
     CHECK(solid == std::array<std::uint8_t, 10> { 0x01, 0x34, 0x01, 0x20, 0xf8,
                                                   0x00, 0x00, 0x00, 0x00, 0xff });
 
-    // And against pulsing at each end of the frequency slider, where the same byte
-    // that carried brightness above carries a rate instead.
+    // And against pulsing at each end of the frequency slider.
     CHECK(surroundRecord(SurroundMode::Pulsing, MinSurroundFrequency, 0, 0, 0x19)[4] == 0x01);
     CHECK(surroundRecord(SurroundMode::Pulsing, MaxSurroundFrequency, 0, 0, 0x19)[4] == 0x0a);
 
@@ -595,4 +594,36 @@ TEST_CASE("surround modes say what their rate byte means", "[protocol][surround]
     CHECK(std::ranges::count_if(AllSurroundModes, [](auto mode) { return cyclesHues(mode); }) == 3);
     CHECK(cyclesHues(SurroundMode::PulsingRgb));
     CHECK(!cyclesHues(SurroundMode::Pulsing));
+}
+
+TEST_CASE("brightness is carried by the colour, not by a field", "[protocol][surround]")
+{
+    using namespace ax310::protocol;
+
+    // The two ends of the vendor's slider, captured in pulsing with the frequency
+    // held still: the channel travels the whole way and byte 4 does not move.
+    CHECK(scaledChannel(0xff, 100) == MaxLightChannel);
+    CHECK(scaledChannel(0xff, 0) == MinLightChannel);
+
+    auto const bright = surroundRecord(SurroundMode::Pulsing, 0x0a, 0, 0, scaledChannel(0xff, 100));
+    auto const dim = surroundRecord(SurroundMode::Pulsing, 0x0a, 0, 0, scaledChannel(0xff, 0));
+    CHECK(bright[4] == dim[4]);
+    CHECK(bright[9] == 0xff);
+    CHECK(dim[9] == 0x19);
+
+    // The line puts the midpoint at 0x8c. The hand-placed slider gave 0x85, which
+    // on this line is 47% -- close enough for a dragged slider, and the reason the
+    // curve is called consistent with the evidence rather than measured from it.
+    CHECK(scaledChannel(0xff, 50) == 0x8c);
+    CHECK(scaledChannel(0xff, 47) == 0x85);
+
+    // An unlit channel stays unlit. Lifting it to the floor would turn a pure red
+    // into a washed-out pink at the bottom of the slider, which is not what the
+    // vendor sends: its dim captures keep the two dark channels at zero.
+    CHECK(scaledChannel(0x00, 0) == 0x00);
+    CHECK(scaledChannel(0x00, 100) == 0x00);
+
+    // Out of range clamps rather than wrapping through the conversion.
+    CHECK(scaledChannel(0xff, -10) == MinLightChannel);
+    CHECK(scaledChannel(0xff, 500) == MaxLightChannel);
 }

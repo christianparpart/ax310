@@ -429,21 +429,35 @@ address that was unaccounted for.
 * **Bytes 7, 8, 9 are red, green, blue.** Proven with green (`00 ff 00`) against
   blue (`00 00 ff`). The three hue-cycling modes ignore the colour and the vendor
   still fills it with white rather than leaving it stale.
-* **Byte 4 is one slot with two meanings, chosen by the mode.** In the animated
-  modes it is a frequency: the slider's ends gave `0x01` and `0x0a`. In solid it
-  is a brightness, moving between `0xf8` and `0x7d`.
+* **Byte 4 is the frequency, and only in the modes that animate.** The slider's
+  ends gave `0x01` and `0x0a`, and holding it still while dragging brightness the
+  whole way left it at `0x0a` in every record.
 
 **"Off" is not a mode.** The vendor's off sends solid (`0x34`) with a black
 colour, byte for byte. Since nothing restores `0xe0` on connect, a strip left
 black stays black across a replug and looks exactly like one that does not work.
 
-**Brightness reaches the strip twice and the curve between is unknown.** Dimming
-a solid blue moved byte 4 from `0xf8` to `0x7d` *and* the blue channel from
-`0xfe` to `0xa0` in the same record. Those are not the same ratio (0.50 against
-0.63), so byte 4 is not simply the scale applied to the colour. Until that is
-measured, a caller wanting a dimmer strip should scale the colour it passes
-rather than rely on byte 4. The lowest channel value seen is `0x19` -- the same
-floor the button colours have.
+**No light on this device has a brightness field.** Brightness is applied to the
+colour before it is sent, spanning `0x19` to `0xff` per channel -- on the strip in
+solid and in pulsing alike, and on the buttons and the rings the same way. Five
+captures settled it: at both ends of the brightness slider byte 4 was `0xfb`
+while the colour travelled the whole distance. A hand-placed midpoint gave `0x85`,
+which a straight line between the ends puts at 47%, so the curve is taken as
+linear -- consistent with the evidence rather than measured from it, because a
+dragged slider cannot distinguish a line from a gentle curve.
+
+The dark channels stay at zero when dimmed; the floor is not a colour shift, or
+a dimmed red would wash out to pink.
+
+**Byte 4 in solid mode is unexplained.** It carries something -- `0x7d`, `0xcd`,
+`0xf8` and `0xfb` have all been seen, and it changed from `0xcd` to `0xfb` in the
+middle of a drag with no other command written -- but it is not brightness.
+
+An earlier version of this entry said it was, on a single capture in which
+brightness and byte 4 moved together. Two things moving in one capture is not one
+causing the other, and it took three later captures to notice: `b100` and `b0`,
+the two ends of the slider, both sent `0xfb`. What would settle what byte 4 *is*:
+a capture in solid mode where only the hue changes, brightness untouched.
 
 All six modes have since been driven on hardware with `ax310_probe --surround`,
 along with `off`, so the mode table and the colour bytes are confirmed and not

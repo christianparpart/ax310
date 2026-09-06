@@ -453,13 +453,13 @@ void writeSpec(Document& out)
     out.line("01 <mode> 01 20 <rate> 00 00 <r> <g> <b>");
     out.line("```");
     out.line("");
-    out.line("| Mode | Selector | Rate means | Colour used |");
+    out.line("| Mode | Selector | Frequency read | Colour used |");
     out.line("| --- | --- | --- | --- |");
     for (auto const mode: AllSurroundModes)
         out.line("| {} | `{}` | {} | {} |",
                  nameOf(mode),
                  hex(selectorFor(mode)),
-                 isAnimated(mode) ? "frequency" : "brightness",
+                 isAnimated(mode) ? "yes" : "no, and what it carries is unexplained",
                  cyclesHues(mode) ? "no, it cycles hues" : "yes");
     out.line("");
     out.line("The selectors are four apart rather than one; what the low two bits are for is "
@@ -467,6 +467,12 @@ void writeSpec(Document& out)
              "gave `{}` and `{}`.",
              hex(MinSurroundFrequency),
              hex(MaxSurroundFrequency));
+    out.line("");
+    out.line("**No light on this device has a brightness field.** Brightness is applied to the "
+             "colour before it is sent, spanning `{}` to `{}` per channel -- on the strip in "
+             "every mode, and on the buttons and rings the same way.",
+             hex(MinLightChannel),
+             hex(MaxLightChannel));
     out.line("");
     out.line("There is no mode for darkness: the vendor's \"off\" sends {} with a black "
              "colour. Nothing restores this address on connect, so a strip left black stays "

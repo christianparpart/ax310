@@ -92,7 +92,7 @@ inline constexpr std::array<SurroundMode, SurroundModeCount> AllSurroundModes {
 }
 
 /// @param mode The mode to ask about.
-/// @return Whether the mode animates, which decides what its rate byte means.
+/// @return Whether the mode animates, and so whether its frequency byte is read.
 [[nodiscard]] constexpr bool isAnimated(SurroundMode mode) noexcept
 {
     return mode != SurroundMode::Solid;

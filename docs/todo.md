@@ -179,10 +179,12 @@ captures name them.
   function buttons and the knob rings, `0xe0` drives the surround strip in six
   modes. Neither is restored across connect, which for `0xe0` matters: its "off"
   is a black solid, so a strip left off stays off across a replug.
-- **Surround brightness reaches the strip twice** — byte 4 and the colour both
-  move when the vendor's brightness slider does, at different ratios. One capture
-  of a *pulsing* mode at two brightnesses, frequency held still, would say whether
-  byte 4 is brightness only in solid or always.
+- ~~**Surround brightness reaches the strip twice.**~~ It does not. Byte 4 is the
+  frequency and nothing else; brightness is applied to the colour, `0x19` to
+  `0xff`, in every mode and on every light this device has.
+- **Byte 4 in solid mode** — carries `0x7d`, `0xcd`, `0xf8` or `0xfb`, changes
+  mid-drag, and is not brightness. A capture in solid where only the hue moves
+  would say what it tracks. Not guessed at again until then.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries
   no mix, so setting the audience mix's colour means selecting it, writing, and
   selecting back. Whether the deck keeps both colours or the driver must is
