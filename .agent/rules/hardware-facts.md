@@ -260,10 +260,10 @@ ends the touch -- not a guess that happens to work but a reading of something th
 deck actually does. It also explains the all-zero reports: they are occasional
 fillers during a touch, not the suppressed heartbeat.
 
-Still open: whether audio was playing during the zero run. If it was, the case is
-closed; if it was not, a heartbeat carrying non-zero meters has still never been
-seen mid-drag, and the ten-to-one gap in the counts already says it does not
-arrive.
+**Audio was playing during the zero run**, so the meters were not zero and a
+heartbeat arriving mid-drag would have been counted. None did. The suppression is
+observed directly, not inferred from rates, and there is no audio-dependent
+failure in the touch path.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 They are **not** the two-finger case: the deck's owner reports the panel simply
