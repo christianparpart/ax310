@@ -369,8 +369,9 @@ void reportTouchSummary(IConsole& console, TouchSummary const& run)
               run.othersBetween,
               run.gesturesWithOthers);
     writeLine(console,
-              "Device treats the first of those as the finger lifting, so anything above "
-              "zero means a drag is reported as press/release/press.");
+              "All-zero reports are excluded, because Device drops those before anything "
+              "sees them. What is left is what would end a drag: Device treats the first "
+              "of these as the finger lifting.");
     if (!run.midGestureKinds.empty())
     {
         writeLine(console, "");
@@ -464,6 +465,13 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
 
         if (payload[protocol::EventTypeOffset] != protocol::ScreenTouchEventType)
         {
+            // Device drops an all-zero report before anything sees it -- the deck
+            // interleaves them and decoding one would release every held button.
+            // This has to drop them too, or it measures reports the driver never
+            // acts on and calls them a defect. It did exactly that once.
+            if (std::ranges::all_of(payload, [](std::uint8_t byte) { return byte == 0; }))
+                continue;
+
             // Only interesting once a finger is down and before it has lifted.
             if (previousFlags.has_value() && (Clock::now() - previousAt) <= ContactGap)
             {

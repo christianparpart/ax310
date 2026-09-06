@@ -239,18 +239,22 @@ times a second" and dedupes on it. It also raises a question that matters more
 than the flags byte: `Device::dispatchEvent` treats the first **non-touch** report
 as the finger lifting, and the deck streams meter reports continuously. If those
 interleave with touch reports, every drag is delivered as press, release, press.
-Measured: **9 of them, on 9 separate occasions, across 15 gestures.** Roughly one
-per drag. So the driver really does deliver a drag as press, release, press, and
-`ActionTile` fires on a press-release pair -- dragging across the tile row can
-activate a tile nobody pressed.
+~~Measured: 9 of them across 15 gestures, so a drag really is delivered as press,
+release, press.~~ **Withdrawn.** Every one of those reports was all-zero, and
+`Device::poll` drops all-zero reports before anything sees them -- the deck
+interleaves them and decoding one would release every held button. They never
+reach `dispatchEvent`, so no spurious release was ever demonstrated.
 
-The fix is not obvious, and this is why. A finger held still produces silence, and
-a finger lifted produces silence, so **silence cannot tell them apart** and a
-timeout would end a press-and-hold. Either the deck marks the lift somewhere and
-the driver is not reading it, or release has to be inferred from something else
-entirely. `--touches` now prints the first eight bytes of every non-touch report
-that arrives mid-gesture: if they are all one shape there is no lift marker among
-them, and if one differs, that is it.
+The mistake was in the instrument: `--touches` counted reports the driver
+discards, and the count was then written up as a driver defect. It now applies the
+same filter, so what it counts is what `dispatchEvent` would actually act on.
+
+**The concern is not disposed of, only unproven.** `dispatchEvent` does treat the
+first non-touch report as a lift, and a report is only all-zero when nothing else
+is happening. With audio playing the meters are not zero, so meter reports would
+survive the filter and land mid-drag. That predicts a bug that appears only when
+something is playing -- which is worth one run with music on and a few drags, and
+is not worth asserting before it.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 They are **not** the two-finger case: the deck's owner reports the panel simply
