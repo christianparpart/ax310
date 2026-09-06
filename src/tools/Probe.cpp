@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -303,12 +304,18 @@ int tryRegister(HidApiTransport& transport, IConsole& console, std::uint8_t addr
     return EXIT_SUCCESS;
 }
 
-/// Prints every screen touch with the byte nobody has explained.
+/// Prints every screen touch with the byte nobody has explained, and then the
+/// thing a tally cannot show: which value follows which.
 ///
-/// Report offset 0x01 carries seven distinct values across 1367 captured touches
-/// and is not speed and not finger count -- both were tested and both failed. It
-/// needs somebody performing a known gesture while the value is watched, which is
-/// what this is for.
+/// Report offset 0x01 carries seven distinct values across every capture so far
+/// and is not speed and not finger count -- both were tested and both refuted.
+/// The first run of this printed only a tally, and a tally cannot distinguish a
+/// counter from a category: 0x10, 0x14, 0x18 and 0x1c are 0x10 | (n << 2) for
+/// n = 0..3, which looks like a two-bit field, but they came back 94, 50, 12 and
+/// 166 times, which no counter does. Transitions separate the two readings.
+///
+/// The deck does not announce a lift: it simply stops sending touch reports, so a
+/// gap marks the end of a contact. That is how Device decides Released too.
 ///
 /// @param transport An open control interface.
 /// @param console Where the touches are printed.
@@ -316,16 +323,30 @@ int tryRegister(HidApiTransport& transport, IConsole& console, std::uint8_t addr
 /// @return Process status.
 int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
 {
+    using Clock = std::chrono::steady_clock;
+
     std::array<std::uint8_t, protocol::PaddedReportSize + 1> buffer {};
     std::map<std::uint8_t, std::size_t> seen;
+    std::map<std::pair<std::uint8_t, std::uint8_t>, std::size_t> followedBy;
+    std::map<std::uint8_t, std::size_t> startsAContact;
+
     std::size_t touches = 0;
+    std::size_t contacts = 0;
+    std::optional<std::uint8_t> previousFlags;
+    int previousX = 0;
+    int previousY = 0;
+    auto previousAt = Clock::now();
 
-    writeLine(console, "{:>6}  {:>5}  {:>5}  {}", "flags", "x", "y", "phase");
+    // A held finger repeats at about five reports a second, so a third of a
+    // second of silence is a lift rather than a pause.
+    constexpr auto ContactGap = std::chrono::milliseconds { 300 };
 
-    auto const deadline = std::chrono::steady_clock::now() + std::chrono::seconds { seconds };
-    while (std::chrono::steady_clock::now() < deadline)
+    writeLine(console, "{:>5}  {:>5}  {:>5}  {:>6}  {:>6}  {}", "flags", "x", "y", "dx", "dy", "");
+
+    auto const deadline = Clock::now() + std::chrono::seconds { seconds };
+    while (Clock::now() < deadline)
     {
-        auto const bytesRead = transport.read(buffer, std::chrono::milliseconds { 200 });
+        auto const bytesRead = transport.read(buffer, std::chrono::milliseconds { 100 });
         if (!bytesRead)
         {
             writeErrorLine(console, "the read failed");
@@ -339,20 +360,50 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
             continue;
 
         auto const report = protocol::decodeReport(payload);
+        auto const now = Clock::now();
+        auto const isNewContact = !previousFlags.has_value() || (now - previousAt) > ContactGap;
+
         ++touches;
         ++seen[report.touchFlags];
+        if (isNewContact)
+        {
+            ++contacts;
+            ++startsAContact[report.touchFlags];
+        }
+        else
+            ++followedBy[{ *previousFlags, report.touchFlags }];
+
         writeLine(console,
-                  "  0x{:02x}  {:>5}  {:>5}  {}",
+                  " 0x{:02x}  {:>5}  {:>5}  {:>6}  {:>6}  {}",
                   report.touchFlags,
                   report.touchX,
                   report.touchY,
-                  report.isScreenTouch ? "down" : "up");
+                  isNewContact ? 0 : report.touchX - previousX,
+                  isNewContact ? 0 : report.touchY - previousY,
+                  isNewContact ? "<- new contact" : "");
+
+        previousFlags = report.touchFlags;
+        previousX = report.touchX;
+        previousY = report.touchY;
+        previousAt = now;
     }
 
     writeLine(console, "");
-    writeLine(console, "{} touch reports, and the flags byte took these values:", touches);
+    writeLine(console, "{} touch reports across {} contacts.", touches, contacts);
+    writeLine(console, "");
+    writeLine(console, "How often each value appeared, and how often it began a contact:");
     for (auto const& [flags, count]: seen)
-        writeLine(console, "  0x{:02x}  {} times", flags, count);
+        writeLine(console,
+                  "  0x{:02x}  {:>4} times, {:>4} of them first",
+                  flags,
+                  count,
+                  startsAContact.contains(flags) ? startsAContact.at(flags) : 0);
+
+    writeLine(console, "");
+    writeLine(console, "Which value follows which, within one contact:");
+    for (auto const& [pair, count]: followedBy)
+        writeLine(console, "  0x{:02x} -> 0x{:02x}  {:>4}", pair.first, pair.second, count);
+
     if (touches == 0)
         writeErrorLine(console, "nothing arrived -- is another program holding the deck?");
 
