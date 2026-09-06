@@ -128,21 +128,29 @@ Rectangle {
         spacing: 0
 
         ActionTile {
+            // Named so a test can ask where this tile actually is.
+            objectName: "switchMixTile"
             width: root.width / 5; height: parent.height
             glyph: Theme.iconSwitch; label: "Switch mix"; accent: root.accent
             onActivated: if (ax310Device) ax310Device.selectMix(root.mix === 0 ? 1 : 0)
         }
         ActionTile {
+            // Named so a test can ask where this tile actually is.
+            objectName: "muteMicTile"
             width: root.width / 5; height: parent.height
             glyph: Theme.iconMute; label: "Mute mic"; accent: root.accent
             onActivated: if (ax310Device) ax310Device.setLevel(root.mix, 0, 0)
         }
         ActionTile {
+            // Named so a test can ask where this tile actually is.
+            objectName: "monitorTile"
             width: root.width / 5; height: parent.height
             glyph: Theme.iconMonitor; label: "Monitor"; accent: root.accent
             pending: true
         }
         ActionTile {
+            // Named so a test can ask where this tile actually is.
+            objectName: "effectsTile"
             width: root.width / 5; height: parent.height
             glyph: Theme.iconEffects; label: "Effects"; accent: root.accent
             active: root.showingEffects
@@ -159,6 +167,8 @@ Rectangle {
         // on a guess would leave somebody's deck in a state they did not ask for,
         // so the tile says what is true instead.
         ActionTile {
+            // Named so a test can ask where this tile actually is.
+            objectName: "dualMixTile"
             width: root.width / 5; height: parent.height
             glyph: Theme.iconDualMix; label: "Dual mix"; accent: root.accent
             pending: true

@@ -568,13 +568,11 @@ TEST_CASE("the desktop's preview shows the page the deck is on", "[gui][render][
 TEST_CASE("a touch on the panel lands on the tile it looks like", "[gui][render][touch]")
 {
     // The deck reports a touch in its own screen coordinates and the application
-    // posts it at those coordinates verbatim, so where a tile *looks* and where it
-    // *is* are the same question -- and it is answerable without the deck, by
-    // posting the same events into the same QML.
+    // passes them through verbatim, so where a tile *looks* and where it *is* are
+    // the same question -- and it is answerable without the deck.
     //
-    // The tile row is the bottom 136 pixels, five tiles of 160. Their centres are
-    // therefore at x = 80, 240, 400, 560, 720 and y = 412: Switch mix, Mute mic,
-    // Monitor, Effects, Dual mix.
+    // The tile row is the bottom 136 pixels, five tiles of 160, so their centres
+    // are at x = 80, 240, 400, 560, 720 and y = 412.
     RenderHarness harness;
     harness.connectWithLevels({ 15, 8, 0, 20, 18, 13 }, { 12, 8, 0, 11, 20, 9 });
 
@@ -586,15 +584,50 @@ TEST_CASE("a touch on the panel lands on the tile it looks like", "[gui][render]
     REQUIRE(view.status() == QQuickView::Ready);
     view.show();
 
-    // Sent rather than posted. A posted event waits for the event loop to reach
-    // it and for the window to be in a state that accepts it, and on Windows
-    // under the offscreen platform it never arrived -- the taps below all
-    // registered on Linux and none of them on Windows. Sending puts the question
-    // directly to the window's own event handler, which is the thing being
-    // asked about: whether a press at these coordinates finds this control.
+    constexpr int TileRow = 412;
+
+    REQUIRE(view.rootObject() != nullptr);
+    CHECK(view.rootObject()->width() == PanelWidth);
+    CHECK(view.rootObject()->height() == PanelHeight);
+
+    /// @param name The objectName the tile carries.
+    /// @param x Where the deck would report a touch.
+    /// @param y The same.
+    /// @return Whether that tile's rectangle contains that point.
+    auto const occupies = [&view](char const* name, int x, int y) {
+        auto* const tile = view.rootObject()->findChild<QQuickItem*>(name);
+        if (tile == nullptr)
+        {
+            UNSCOPED_INFO(name << " is not in the scene at all");
+            return false;
+        }
+
+        auto const corner = tile->mapToScene(QPointF(0, 0));
+        QRectF const box { corner, QSizeF { tile->width(), tile->height() } };
+        UNSCOPED_INFO(name << " occupies " << box.x() << "," << box.y() << " " << box.width() << "x"
+                           << box.height() << ", asked about " << x << "," << y);
+        return box.contains(QPointF(x, y));
+    };
+
+    // The coordinate question, on every platform. This is the half that matters:
+    // if a tile moves, the deck's touches land somewhere else and nobody notices
+    // until they reach for one.
+    CHECK(occupies("switchMixTile", 80, TileRow));
+    CHECK(occupies("muteMicTile", 240, TileRow));
+    CHECK(occupies("monitorTile", 400, TileRow));
+    CHECK(occupies("effectsTile", 560, TileRow));
+    CHECK(occupies("dualMixTile", 720, TileRow));
+
+#ifndef _WIN32
+    // And that a press there reaches the control, which needs the platform to
+    // deliver a synthetic pointer event.
     //
-    // The application still posts, from a signal handler on the GUI thread. That
-    // is a different concern from hit testing and is not what this checks.
+    // Not on Windows. Under the offscreen platform there, Qt Quick accepts the
+    // event and delivers it nowhere: the scene is provably right -- the window is
+    // visible, the root object is exactly 800x480, and childAt() finds an item at
+    // the tile's centre -- and a sent press still changes nothing. Posting does
+    // not work either. So the geometry above is what runs everywhere, and this
+    // runs where delivery works rather than being deleted or quietly skipped.
     auto const tap = [&view](int x, int y) {
         QPointF const at(x, y);
         QMouseEvent press {
@@ -607,22 +640,6 @@ TEST_CASE("a touch on the panel lands on the tile it looks like", "[gui][render]
         QCoreApplication::sendEvent(&view, &release);
         RenderHarness::settle(120);
     };
-
-    // Separates the layers, because a tap that does nothing could be any of them:
-    // the window not accepting events, the scene having no item where the tile is
-    // drawn, or delivery reaching the item and the handler not firing. Each of
-    // these prints its value whether it passes or fails, which UNSCOPED_INFO did
-    // not do on the run that needed it.
-    REQUIRE(view.rootObject() != nullptr);
-    CHECK(view.isVisible());
-    CHECK(view.rootObject()->width() == PanelWidth);
-    CHECK(view.rootObject()->height() == PanelHeight);
-
-    // What Qt believes sits under the Effects tile's centre. A null here means
-    // the scene disagrees with the picture and no event plumbing would help.
-    CHECK(view.rootObject()->childAt(560, 412) != nullptr);
-
-    constexpr int TileRow = 412;
 
     SECTION("the Effects tile opens the effects page, and closes it again")
     {
@@ -657,10 +674,17 @@ TEST_CASE("a touch on the panel lands on the tile it looks like", "[gui][render]
         CHECK_FALSE(harness.bridge.panelShowsEffects());
         CHECK(harness.bridge.selectedMix() == mix);
     }
+#endif
 }
 
+#ifndef _WIN32
 TEST_CASE("the desktop's preview of the deck can be operated", "[gui][render][touch]")
 {
+    // Not on Windows, and unlike the tile geometry above there is no portable
+    // half to keep: the whole claim here is that a scale transform maps *input*
+    // as well as pixels, and Qt Quick's offscreen platform on Windows delivers no
+    // synthetic pointer events at all. A version of this that ran there would be
+    // asserting something it had not tested.
     // The preview is a live ScreenUI under a scale transform, so it is not only a
     // picture: a click lands on whatever the deck's own finger would have hit.
     //
@@ -714,3 +738,4 @@ TEST_CASE("the desktop's preview of the deck can be operated", "[gui][render][to
     tapPanel(80, TileRow);
     CHECK(harness.bridge.selectedMix() == 1);
 }
+#endif
