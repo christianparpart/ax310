@@ -146,19 +146,23 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Function buttons ×4 | hardware → input report | ✅ decoded |
 | Touch panel input | hardware → input report | ✅ press/move/release, coordinates verified |
 | Screen rendering | host → chunked JPEG | ✅ 800×480 |
-| Six audio meters | hardware → input report | ✅ decoded; ❌ track mapping unknown |
+| Six audio meters | hardware → input report | ✅ decoded, **one per track** in knob order, stereo pairs from `0x12` |
 | Knob LED ring brightness | `0x1e` | ✅ confirmed on hardware |
 | Knob LED ring levels | `0x27` | ✅ confirmed, and **readable back** |
 | Which rings light | `0x21`, `0x14` | ◐ observed, encoding not worked out |
 | Screen brightness | unknown register | ❌ stub; `0x1e` was the candidate and the hardware refuted it |
 | RGB lighting control | partly the ring registers | ◐ ring colour tracks the mix (blue creator / orange audience) |
-| Per-track volume | `0x2b` | ◐ **register found**; how a track is selected is not |
-| Creator ↔ Audience switch | `0x15`, plus `0x21`/`0x22` and a `0xc0` gain swap | ◐ **captured**, one direction |
-| Single ↔ Dual Mix | `0x21`/`0x22`, and `0x2e` when enabling | ◐ **captured** both directions |
+| Per-track volume | `0x27` and `0x2e` | ✅ two contiguous six-byte blocks, one per mix, `base + track`; all twelve read and written |
+| Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |
+| Single ↔ Dual Mix | `0x21` (`0x80` single / `0x00` dual), `0x22` | ◐ captured, **not driven** — `0x21` also selects which rings light and which it is doing is unsettled |
 | Mic monitoring on/off | host command | ❌ |
 | Phantom power +48 V | host command | ❌ |
 | Mic gain | host command | ❌ |
-| Noise gate / reverb / compressor / EQ | `0xfe` family | ◐ EQ decoded, four enables identified, none controllable yet |
+| Reverb | `0x85` enable, `0x94` body | ✅ five sliders driven from both screens |
+| Compressor | `0x9b` enable, `0x9f` body | ◐ threshold and ratio driven; attack, release, output gain not located |
+| Equaliser | `0xa3` bands | ◐ six writable bands decoded; its enable is a guess (`0x87`/`0x88`/`0x9c`), untested |
+| Echo | shares `0x85`/`0x94` with reverb | ◐ selected by body byte 14; its three sliders not located |
+| Noise gate | `0x9e` body | ❌ no separate enable seen; none of its four sliders located |
 | Line-out source selection | host command | ❌ |
 | Effect presets | — app | **app-side only**; ours to design freely |
 | Hotkeys, widgets, 5 pages, swipe | — app | we render our own QML instead |
