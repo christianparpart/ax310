@@ -333,6 +333,15 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
     std::map<std::uint8_t, int> travelWith;
     std::map<std::uint8_t, int> furthestWith;
 
+    // One line per contact: what the value did, and how far and how long into the
+    // contact it did it. Per-step movement cannot separate a value that tracks
+    // instantaneous speed from one that accumulates, and the two runs so far
+    // disagree about which this is.
+    std::string contactLog;
+    std::size_t reportsInContact = 0;
+    int travelInContact = 0;
+    auto contactBegan = Clock::now();
+
     std::size_t touches = 0;
     std::size_t contacts = 0;
     std::optional<std::uint8_t> previousFlags;
@@ -370,15 +379,21 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
         ++seen[report.touchFlags];
         if (isNewContact)
         {
+            if (contacts > 0)
+                contactLog += "\n";
             ++contacts;
             ++startsAContact[report.touchFlags];
+            reportsInContact = 0;
+            travelInContact = 0;
+            contactBegan = now;
+            contactLog += std::format("  contact {:<3} 0x{:02x}", contacts, report.touchFlags);
         }
         else
             ++followedBy[{ *previousFlags, report.touchFlags }];
 
         // How far the finger moved since the previous report, which is what tells
         // a movement flag from a counter.
-        auto const step = isNewContact ? 0
+        int const step = isNewContact ? 0
                                        : std::abs(report.touchX - previousX)
                                              + std::abs(report.touchY - previousY);
         travelWith[report.touchFlags] += step;
@@ -394,6 +409,19 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
                   isNewContact ? 0 : report.touchX - previousX,
                   isNewContact ? 0 : report.touchY - previousY,
                   isNewContact ? "<- new contact" : "");
+
+        ++reportsInContact;
+        travelInContact += step;
+        if (!isNewContact && report.touchFlags != *previousFlags)
+        {
+            auto const elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - contactBegan);
+            contactLog += std::format(" -> 0x{:02x} after {} reports, {} px, {} ms",
+                                      report.touchFlags,
+                                      reportsInContact,
+                                      travelInContact,
+                                      elapsed.count());
+        }
 
         previousFlags = report.touchFlags;
         previousX = report.touchX;
@@ -411,6 +439,10 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
                   flags,
                   count,
                   startsAContact.contains(flags) ? startsAContact.at(flags) : 0);
+
+    writeLine(console, "");
+    writeLine(console, "Each contact, and where along it the value changed:");
+    writeLine(console, "{}", contactLog);
 
     writeLine(console, "");
     writeLine(console, "And how much the finger was moving when each value was reported:");

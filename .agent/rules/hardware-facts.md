@@ -192,11 +192,36 @@ with `ax310_probe --touches`:
   attractive -- but an earlier run counted them 94, 50, 12 and 166 times, and no
   counter is that uneven. A saturating ramp is, with `0x1c` as the top.
 
-The live hypothesis is that it marks a contact that has become a drag: taps and
-holds stayed at `0x00`, and the one contact that moved is the one that latched.
-Untested -- what settles it is whether `0x1c` reports carry movement and `0x00`
-reports do not, which `--touches` now measures directly.
+A second run, 638 reports across 11 contacts, sharpened it:
+
+- **Every transition goes up, and none goes down.** `0x00 -> 0x10`, `0x00 -> 0x14`,
+  `0x00 -> 0x1c` and `0x10 -> 0x1c` were all seen; in 627 transitions there was not
+  one downward step and no contact ever returned to `0x00`. Ordered
+  `0x00 < 0x10 < 0x14 < 0x1c`, the value is monotonic within a contact and
+  saturates -- but it can skip levels rather than walking each one.
+- **`0x00` is the not-moving state.** It moved in 36 of 156 reports; the other
+  values moved in 76 to 93 per cent of theirs.
+- **Instantaneous speed is not what picks the level.** One contact sat at `0x14`
+  for 155 reports and another went straight to `0x1c`, and the mean step was 2
+  pixels in both.
+
+So the reading is an accumulator that saturates rather than a state that follows
+speed -- something like distance or time since the contact began. `--touches`
+now prints a line per contact saying how many reports, how many pixels and how
+many milliseconds in the value changed, which is what separates those two.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 Whether they are the two-finger case is open; `Protocol.hpp` currently says two
 fingers produce no events at all, which one run appeared to contradict.
+
+## The panel sleeps on its own
+
+The screen turns itself off after a short time when no frames are sent, and
+**touch is not reported while it is off** -- a finger has to wake it first, which
+makes touch look intermittent when the driver is not pushing frames. Observed
+while probing the flags byte with no application running.
+
+That is worth knowing twice over. It explains touches that seem to go missing,
+and it bears on the unfound panel-power register: the vendor software blanks the
+screen after a period of inactivity, and it may be doing nothing more than
+stopping its frames.
