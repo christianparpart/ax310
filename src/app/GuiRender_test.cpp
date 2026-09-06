@@ -608,8 +608,19 @@ TEST_CASE("a touch on the panel lands on the tile it looks like", "[gui][render]
         RenderHarness::settle(120);
     };
 
-    UNSCOPED_INFO("view visible " << view.isVisible() << ", exposed " << view.isExposed() << ", root "
-                                  << (view.rootObject() != nullptr));
+    // Separates the layers, because a tap that does nothing could be any of them:
+    // the window not accepting events, the scene having no item where the tile is
+    // drawn, or delivery reaching the item and the handler not firing. Each of
+    // these prints its value whether it passes or fails, which UNSCOPED_INFO did
+    // not do on the run that needed it.
+    REQUIRE(view.rootObject() != nullptr);
+    CHECK(view.isVisible());
+    CHECK(view.rootObject()->width() == PanelWidth);
+    CHECK(view.rootObject()->height() == PanelHeight);
+
+    // What Qt believes sits under the Effects tile's centre. A null here means
+    // the scene disagrees with the picture and no event plumbing would help.
+    CHECK(view.rootObject()->childAt(560, 412) != nullptr);
 
     constexpr int TileRow = 412;
 
