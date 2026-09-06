@@ -10,13 +10,13 @@
 
 #include "UsbmonCapture.hpp"
 
+#include <ax310/IConsole.hpp>
 #include <ax310/Protocol.hpp>
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
-#include <print>
 #include <set>
 #include <span>
 #include <string>
@@ -192,12 +192,12 @@ struct Decoded
     return decoded;
 }
 
-[[nodiscard]] std::optional<Decoded> load(std::string const& path)
+[[nodiscard]] std::optional<Decoded> load(std::string const& path, IConsole& console)
 {
     auto const capture = tools::readUsbmonCapture(path);
     if (!capture)
     {
-        std::println(stderr, "{}: {}", path, tools::describe(capture.error()));
+        writeErrorLine(console, "{}: {}", path, tools::describe(capture.error()));
         return std::nullopt;
     }
 
@@ -208,13 +208,14 @@ struct Decoded
 
 int main(int argc, char* argv[])
 {
+    SystemConsole console;
     auto const arguments = std::span { argv, static_cast<std::size_t>(argc) };
     if (argc < 2 || argc > 3)
     {
-        std::println(stderr, "usage: {} [--inbound] <capture.pcap> [after.pcap]", arguments[0]);
-        std::println(stderr, "  one file   : every host-to-device command in it");
-        std::println(stderr, "  two files  : what the second one added");
-        std::println(stderr, "  --inbound  : what the deck sent back, and which bytes move");
+        writeErrorLine(console, "usage: {} [--inbound] <capture.pcap> [after.pcap]", arguments[0]);
+        writeErrorLine(console, "  one file   : every host-to-device command in it");
+        writeErrorLine(console, "  two files  : what the second one added");
+        writeErrorLine(console, "  --inbound  : what the deck sent back, and which bytes move");
         return EXIT_FAILURE;
     }
 
@@ -223,17 +224,17 @@ int main(int argc, char* argv[])
         auto const capture = tools::readUsbmonCapture(arguments[2]);
         if (!capture)
         {
-            std::println(stderr, "{}: {}", arguments[2], tools::describe(capture.error()));
+            writeErrorLine(console, "{}: {}", arguments[2], tools::describe(capture.error()));
             return EXIT_FAILURE;
         }
 
         auto const summary = summariseInbound(*capture);
-        std::println("{} reports from the deck, {}..{} bytes",
+        writeLine(console, "{} reports from the deck, {}..{} bytes",
                      summary.reports,
                      summary.shortest,
                      summary.longest);
-        std::println("");
-        std::println("byte  distinct  what it looks like");
+        writeLine(console, "");
+        writeLine(console, "byte  distinct  what it looks like");
         for (std::size_t index = 0; index < summary.values.size(); ++index)
         {
             auto const count = summary.values[index].size();
@@ -246,29 +247,28 @@ int main(int argc, char* argv[])
             else if (count > 4)
                 kind = "changes a lot";
 
-            std::println("0x{:02x}  {:>8}  {}", index, count, kind);
+            writeLine(console, "0x{:02x}  {:>8}  {}", index, count, kind);
         }
 
         return EXIT_SUCCESS;
     }
 
-    auto const first = load(arguments[1]);
+    auto const first = load(arguments[1], console);
     if (!first)
         return EXIT_FAILURE;
 
     if (argc == 2)
     {
         for (std::size_t index = 0; index < first->commands.size(); ++index)
-            std::println("{:3d}  {}", index, first->commands[index]);
+            writeLine(console, "{:3d}  {}", index, first->commands[index]);
 
-        std::println(stderr,
-                     "\n{} host-to-device commands ({} screen chunks skipped)",
+        writeErrorLine(console, "\n{} host-to-device commands ({} screen chunks skipped)",
                      first->commands.size(),
                      first->screenChunks);
         return EXIT_SUCCESS;
     }
 
-    auto const second = load(arguments[2]);
+    auto const second = load(arguments[2], console);
     if (!second)
         return EXIT_FAILURE;
 
@@ -278,11 +278,10 @@ int main(int argc, char* argv[])
         if (std::ranges::find(first->commands, line) != first->commands.end())
             continue;
 
-        std::println("{:3d}  {}", shown++, line);
+        writeLine(console, "{:3d}  {}", shown++, line);
     }
 
-    std::println(stderr,
-                 "\n{} new of {} (baseline had {}, {} screen chunks skipped)",
+    writeErrorLine(console, "\n{} new of {} (baseline had {}, {} screen chunks skipped)",
                  shown,
                  second->commands.size(),
                  first->commands.size(),

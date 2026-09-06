@@ -11,6 +11,8 @@
 /// runner has neither a screen nor a driver, and neither does a session where the
 /// deck's owner is away from the machine.
 
+#include <ax310/IConsole.hpp>
+
 #include <QGuiApplication>
 #include <QQuickWindow>
 
@@ -21,6 +23,8 @@
 
 int main(int argc, char* argv[])
 {
+    ax310::SystemConsole console;
+
     // Pinning the software scene graph is what lets these run with no display and
     // no driver -- and it also hides one whole class of defect, because the deck's
     // frames are not produced that way. They come from a window the compositor
@@ -36,7 +40,7 @@ int main(int argc, char* argv[])
         // macOS this skips rather than pretending to have checked something.
         if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") && qEnvironmentVariableIsEmpty("DISPLAY"))
         {
-            std::puts("no Wayland or X11 session, so the native-backend rendering tests are skipped");
+            writeLine(console, "no Wayland or X11 session, so the native-backend rendering tests are skipped");
             return 4;
         }
     }

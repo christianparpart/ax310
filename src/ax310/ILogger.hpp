@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "IConsole.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -45,7 +47,7 @@ inline constexpr std::array<std::string_view, LogLevelCount> LogLevelNames {
 /// @param threshold The lowest level a sink keeps.
 /// @return Whether a line at @p level survives @p threshold.
 ///
-/// Extracted from StderrLogger so the decision can be tested without capturing a
+/// Extracted from ConsoleLogger so the decision can be tested without capturing a
 /// stream: what a sink does with a line is its business, but *which* lines reach
 /// it is a rule worth pinning.
 [[nodiscard]] constexpr bool isLoggable(LogLevel level, LogLevel threshold) noexcept
@@ -113,16 +115,26 @@ class NullLogger final: public ILogger
     void log(LogLevel /*level*/, std::string_view /*message*/) override {}
 };
 
-/// A logger that writes to stderr, one line per call, prefixed with the level.
-class StderrLogger final: public ILogger
+/// A logger that writes each line to a console, prefixed with its level.
+///
+/// It takes the console rather than naming stderr, which is what makes the line
+/// it composes testable: a CapturingConsole shows the exact bytes, prefix and
+/// newline included. Before this the only way to see them was to run something
+/// and read a terminal, so nothing checked them.
+class ConsoleLogger final: public ILogger
 {
   public:
+    /// @param console Where the lines go; must outlive this.
     /// @param threshold Lines below this level are dropped.
-    explicit StderrLogger(LogLevel threshold = LogLevel::Info): _threshold { threshold } {}
+    explicit ConsoleLogger(IConsole& console, LogLevel threshold = LogLevel::Info):
+        _console { console }, _threshold { threshold }
+    {
+    }
 
     void log(LogLevel level, std::string_view message) override;
 
   private:
+    IConsole& _console;
     LogLevel _threshold;
 };
 
