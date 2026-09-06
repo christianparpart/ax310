@@ -740,3 +740,48 @@ TEST_CASE("the desktop's preview of the deck can be operated", "[gui][render][to
     CHECK(harness.bridge.selectedMix() == 1);
 }
 #endif
+
+TEST_CASE("monitoring is the microphone's level in the creator mix", "[gui][monitor]")
+{
+    // Captured from the vendor software: its monitor widget writes 0x27 -- the
+    // creator block's base, which is the Mic track -- and nothing else. There is
+    // no separate register, so this is the whole feature.
+    RenderHarness harness;
+    harness.connectWithLevels({ 15, 8, 0, 20, 18, 13 }, { 12, 8, 0, 11, 20, 9 });
+
+    REQUIRE(harness.bridge.micMonitor());
+    REQUIRE(harness.bridge.levelPercent(0, 0) == 75);
+
+    harness.bridge.setMicMonitor(false);
+    CHECK_FALSE(harness.bridge.micMonitor());
+    CHECK(harness.bridge.levelPercent(0, 0) == 0);
+
+    // The audience still hears you: turning your own monitoring off is not a mute.
+    CHECK(harness.bridge.levelPercent(1, 0) == 60);
+
+    // And it comes back where it was, not at full.
+    harness.bridge.setMicMonitor(true);
+    CHECK(harness.bridge.micMonitor());
+    CHECK(harness.bridge.levelPercent(0, 0) == 75);
+}
+
+TEST_CASE("the panel's Monitor tile is operable now", "[gui][render][monitor]")
+{
+    RenderHarness harness;
+    harness.connectWithLevels({ 15, 8, 0, 20, 18, 13 }, { 12, 8, 0, 11, 20, 9 });
+
+    QQuickView view;
+    view.setResizeMode(QQuickView::SizeRootObjectToView);
+    view.rootContext()->setContextProperty("ax310Device", &harness.bridge);
+    view.resize(PanelWidth, PanelHeight);
+    view.setSource(QUrl("qrc:/qt/qml/AX310/App/gui/ScreenUI.qml"));
+    REQUIRE(view.status() == QQuickView::Ready);
+    view.show();
+
+    // It shipped inert, with "not mapped" under it, because the register was
+    // thought to be missing. It never was.
+    auto* const tile = view.rootObject()->findChild<QQuickItem*>("monitorTile");
+    REQUIRE(tile != nullptr);
+    CHECK_FALSE(tile->property("pending").toBool());
+    CHECK(tile->property("active").toBool());
+}

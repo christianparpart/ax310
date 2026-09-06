@@ -146,7 +146,8 @@ Rectangle {
             objectName: "monitorTile"
             width: root.width / 5; height: parent.height
             glyph: Theme.iconMonitor; label: "Monitor"; accent: root.accent
-            pending: true
+            active: ax310Device ? ax310Device.micMonitor : false
+            onActivated: if (ax310Device) ax310Device.setMicMonitor(!ax310Device.micMonitor)
         }
         ActionTile {
             // Named so a test can ask where this tile actually is.

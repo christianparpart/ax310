@@ -39,6 +39,7 @@ class DeviceBridge final: public QObject, public IDeviceListener
     Q_PROPERTY(int selectedMix READ selectedMix NOTIFY mixChanged)
     Q_PROPERTY(bool panelShowsEffects READ panelShowsEffects WRITE setPanelShowsEffects NOTIFY
                    panelShowsEffectsChanged)
+    Q_PROPERTY(bool micMonitor READ micMonitor NOTIFY levelChanged)
 
   public:
     /// Builds the seams the driver needs and injects them: a real USB transport,
@@ -147,6 +148,27 @@ class DeviceBridge final: public QObject, public IDeviceListener
 
     /// @param showing Whether the panel should show the effects.
     void setPanelShowsEffects(bool showing);
+
+    /// Whether the microphone is audible in the creator mix.
+    ///
+    /// That is all "monitor" is on this deck. Captured from the vendor software:
+    /// its monitor widget writes the microphone's level in the creator mix --
+    /// `0x27`, which is that block's base -- and nothing else. Turning it off
+    /// silences you in your own headphones and leaves the audience mix alone, so
+    /// the stream still hears you, which is exactly what monitoring means.
+    ///
+    /// There is no separate register, and there never was one to find.
+    ///
+    /// @return Whether the microphone's creator-mix level is above zero.
+    [[nodiscard]] bool micMonitor() const;
+
+    /// Turns monitoring on or off.
+    ///
+    /// Off remembers the level it silenced, so on restores what was there rather
+    /// than guessing at full.
+    ///
+    /// @param enabled Whether the microphone should be audible in the creator mix.
+    Q_INVOKABLE void setMicMonitor(bool enabled);
 
     /// Pushes one encoded frame to the deck's screen.
     /// @param jpeg The encoded frame.
@@ -260,6 +282,10 @@ class DeviceBridge final: public QObject, public IDeviceListener
 
     /// Which page the panel is on, shared by every view of it.
     bool _panelShowsEffects = false;
+
+    /// The microphone's creator-mix level before monitoring was turned off, so
+    /// turning it back on restores what was there.
+    int _monitorRestoreLevel = 100;
 
     std::atomic<bool> _isRunning { false };
     std::thread _worker;

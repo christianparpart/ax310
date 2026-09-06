@@ -293,6 +293,32 @@ int DeviceBridge::selectedMix() const noexcept
     return static_cast<int>(indexOf(_mix));
 }
 
+bool DeviceBridge::micMonitor() const
+{
+    return levelPercent(static_cast<int>(indexOf(MixId::Creator)),
+                        static_cast<int>(indexOf(KnobId::Mic)))
+           > 0;
+}
+
+void DeviceBridge::setMicMonitor(bool enabled)
+{
+    auto const creatorMix = static_cast<int>(indexOf(MixId::Creator));
+    auto const micTrack = static_cast<int>(indexOf(KnobId::Mic));
+    auto const current = levelPercent(creatorMix, micTrack);
+
+    if (!enabled)
+    {
+        // Remember what is being silenced. Restoring to full instead would be
+        // louder than what the person had, which is the wrong way to be wrong.
+        if (current > 0)
+            _monitorRestoreLevel = current;
+        setLevel(creatorMix, micTrack, 0);
+        return;
+    }
+
+    setLevel(creatorMix, micTrack, _monitorRestoreLevel > 0 ? _monitorRestoreLevel : 100);
+}
+
 bool DeviceBridge::panelShowsEffects() const noexcept
 {
     return _panelShowsEffects;

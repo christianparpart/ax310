@@ -145,14 +145,12 @@ captures name them.
   what hid it was a decoder that read only the first pair — the microphone, which
   hears whatever is played into the room and so appeared to answer for every
   track in turn.
-- **The mic monitoring toggle — and whether it exists as a command.** The deck's
-  owner reports that Creator Central's monitor on/off is a physical click of the
-  MIC knob, which takes the mic level to 0 and back; that is a knob push the deck
-  reports to the host, not something the host sends. If that is all "Monitor" is,
-  the driver already has it — the knob-push path — and the panel's inert Monitor
-  tile is reserved for a control that does not need a register. Worth settling
-  before capturing anything: what the manual's "Monitor" widget does that the
-  knob push does not.
+- ~~**The mic monitoring toggle.**~~ There was never a register. Captured: the
+  vendor's monitor widget writes `0x27` — the creator block's Mic slot — to full
+  or to zero, and sends `0x22 = 0x02` alongside, which does not change between the
+  two. So monitoring is the microphone's level in the mix you hear, the audience
+  mix is untouched, and the driver could already do it. The panel's Monitor tile
+  is live.
 - ~~**Turn the IPS panel off.**~~ Captured: tapping the vendor's panel-off widget
   sends `01 0a ff`, once, and an idle capture of the same length sends nothing at
   all. `ax310_probe --panel-off` replays it. **Not yet confirmed on the hardware**

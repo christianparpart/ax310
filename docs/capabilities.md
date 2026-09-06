@@ -156,7 +156,7 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Per-track volume | `0x27` and `0x2e` | ✅ two contiguous six-byte blocks, one per mix, `base + track`; all twelve read and written |
 | Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |
 | Single ↔ Dual Mix | `0x21` (`0x80` single / `0x00` dual), `0x22` | ◐ captured, **not driven** — `0x21` also selects which rings light and which it is doing is unsettled |
-| Mic monitoring on/off | — | **may not be a host command at all**: the deck's owner reports Creator Central's monitor on/off is a physical click of the MIC knob, taking the level to 0 and back. What the manual's "Monitor" widget does beyond that is unestablished |
+| Mic monitoring on/off | `0x27`, the creator block's Mic slot | ✅ captured and driven — the vendor's widget writes the microphone's creator-mix level and nothing else; there was never a separate register |
 | Microphone type | host command | ❌ — a three-way selector, not a phantom-power toggle: XLR (+0 V), XLR + phantom (+48 V), 6.3 mm (+3 V) |
 | Mic gain | `0x1f`, with `0x23` alongside | ◐ one capture: a gain-up drag sent `0x1f = 0x38` and `0x23 = 0x00`; the range and what `0x23` does are unknown |
 | Reverb | `0x85` enable, `0x94` body | ✅ five sliders driven from both screens |

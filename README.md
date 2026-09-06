@@ -60,12 +60,17 @@ per track without switching; the inner arc is the live meter with a peak-hold ti
 Blue and orange are the deck's own LED colours for the creator and audience mixes —
 they say which mix you are in, rather than being decoration.
 
-Two tiles are present but inert, and say so rather than looking operable.
-**Monitor**'s register has not been found. **Dual mix**'s has — `0x21` takes
-`0x80` for Single and `0x00` for Dual — but the same address also selects which
-knob rings light, and which of the two it is doing has never been settled on the
-hardware. Holding both slots means the row is not re-cut when they are, so the
-muscle memory built now stays correct.
+One tile is present but inert, and says so rather than looking operable. **Dual
+mix**'s register is known — `0x21` takes `0x80` for Single and `0x00` for Dual —
+but the same address also selects which knob rings light, and which of the two it
+is doing has never been settled on the hardware. Holding the slot means the row is
+not re-cut when it is.
+
+**Monitor** was inert too, until a capture showed there was never a register to
+find: the vendor's monitor widget writes the microphone's level in the creator
+mix and nothing else. Turning it off silences you in your own headphones and
+leaves the audience mix alone, so the stream still hears you — which is exactly
+what monitoring means, and something the driver could already do.
 
 The effects page is built from the driver's parameter table, not written out in
 QML, so a parameter located later becomes one row in `protocol::Parameters` and
@@ -189,7 +194,7 @@ the Qt-free rule: `src/ax310` links hidapi and nothing else.
 
 ## Testing
 
-146 tests, no hardware required.
+151 tests, no hardware required.
 
 Driver tests run against a scripted `FakeHidTransport`. The **rendering tests**
 drive real QML through the software scene graph with the offscreen platform, so
