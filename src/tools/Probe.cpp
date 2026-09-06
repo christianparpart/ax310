@@ -21,10 +21,12 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace
@@ -160,6 +162,203 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
     return true;
 }
 
+/// What `--try` was asked to do.
+struct TryRequest
+{
+    std::uint8_t address = 0;
+    std::uint8_t value = 0;
+    int seconds = 8;
+    bool fenced = false;
+};
+
+/// Parses `--try <addr> <value> [seconds] [--fenced]`, in either order after the
+/// value, because remembering which comes first is not worth a usage error.
+///
+/// @param arguments The whole command line.
+/// @return What to do, or nothing if the arguments do not say.
+[[nodiscard]] std::optional<TryRequest> parseTry(std::span<char* const> arguments)
+{
+    auto const address = parseHex(arguments[2]);
+    auto const value = parseHex(arguments[3]);
+    auto seconds = std::optional<unsigned> { 8 };
+    bool fenced = false;
+
+    for (std::size_t index = 4; index < arguments.size(); ++index)
+    {
+        if (std::string_view { arguments[index] } == "--fenced")
+            fenced = true;
+        else
+            seconds = parseHex(arguments[index]);
+    }
+
+    if (!address || !value || *address > 0xff || *value > 0xff || !seconds || *seconds == 0
+        || *seconds > 600)
+        return std::nullopt;
+
+    return TryRequest { .address = static_cast<std::uint8_t>(*address),
+                        .value = static_cast<std::uint8_t>(*value),
+                        .seconds = static_cast<int>(*seconds),
+                        .fenced = fenced };
+}
+
+/// Writes one byte to one register, waits for somebody to look at the deck, and
+/// puts the old value back.
+///
+/// This is the only generic write this tool has, and it is built the careful way
+/// on purpose. Writing `0x01` to `0x16` once wedged a deck badly enough to need a
+/// power cycle, which is why DangerousAddresses exists -- and why a tool that can
+/// write anywhere would undo the whole point of it. So: the address is refused if
+/// it is on that list, the old value is read first and restored afterwards
+/// whatever happens, and the restore is verified by reading it back rather than
+/// assumed.
+///
+/// It answers the questions that need eyes rather than a capture. `0x21` is
+/// documented as both the mixer mode and which knob rings light, and nobody has
+/// established which -- one write with the deck in view settles it.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param address The register to poke.
+/// @param value The byte to write.
+/// @param seconds How long to leave it there.
+/// @param fenced Whether to wrap it in the settings transaction the vendor uses
+///        for mode changes.
+/// @return Process status.
+int tryRegister(HidApiTransport& transport, IConsole& console, std::uint8_t address,
+                std::uint8_t value, int seconds, bool fenced)
+{
+    if (std::ranges::find(protocol::DangerousAddresses, address) != protocol::DangerousAddresses.end())
+    {
+        writeErrorLine(console,
+                       "refusing 0x{:02x}: writing there once wedged a deck badly enough to "
+                       "need a power cycle",
+                       address);
+        return EXIT_FAILURE;
+    }
+
+    auto const before = readRegister(transport, address, 1);
+    if (!before || before->empty())
+    {
+        writeErrorLine(console, "0x{:02x} did not answer, so there is nothing to put back", address);
+        return EXIT_FAILURE;
+    }
+
+    auto const original = before->front();
+    writeLine(console, "0x{:02x} currently holds 0x{:02x}", address, original);
+
+    auto const write = [&](std::uint8_t byte) {
+        std::array<std::uint8_t, 1> const values { byte };
+        return transport.sendFeatureReport(protocol::frameFeatureReport(protocol::setPropertyAt(address, values)))
+                   .has_value();
+    };
+
+    auto const fence = static_cast<std::uint8_t>(protocol::Property::SettingsTransaction);
+    auto const writeFence = [&](std::uint8_t byte) {
+        std::array<std::uint8_t, 1> const values { byte };
+        return transport.sendFeatureReport(protocol::frameFeatureReport(protocol::setPropertyAt(fence, values)))
+                   .has_value();
+    };
+
+    if (fenced && !writeFence(0x01))
+    {
+        writeErrorLine(console, "could not open the settings transaction");
+        return EXIT_FAILURE;
+    }
+
+    if (!write(value))
+    {
+        writeErrorLine(console, "the write failed");
+        if (fenced)
+            static_cast<void>(writeFence(0x00));
+        return EXIT_FAILURE;
+    }
+
+    if (fenced)
+        static_cast<void>(writeFence(0x00));
+
+    writeLine(console, "0x{:02x} = 0x{:02x} for {} seconds -- look at the deck now", address, value, seconds);
+    std::this_thread::sleep_for(std::chrono::seconds { seconds });
+
+    if (fenced)
+        static_cast<void>(writeFence(0x01));
+    auto const restored = write(original);
+    if (fenced)
+        static_cast<void>(writeFence(0x00));
+
+    if (!restored)
+    {
+        writeErrorLine(console,
+                       "COULD NOT PUT 0x{:02x} BACK. It still holds 0x{:02x}; set it with "
+                       "--try {:02x} {:02x}",
+                       address, value, address, original);
+        return EXIT_FAILURE;
+    }
+
+    auto const after = readRegister(transport, address, 1);
+    if (after && !after->empty() && after->front() == original)
+        writeLine(console, "0x{:02x} put back to 0x{:02x}, and it reads back", address, original);
+    else
+        writeErrorLine(console, "0x{:02x} was written back but does not read as 0x{:02x}", address, original);
+
+    return EXIT_SUCCESS;
+}
+
+/// Prints every screen touch with the byte nobody has explained.
+///
+/// Report offset 0x01 carries seven distinct values across 1367 captured touches
+/// and is not speed and not finger count -- both were tested and both failed. It
+/// needs somebody performing a known gesture while the value is watched, which is
+/// what this is for.
+///
+/// @param transport An open control interface.
+/// @param console Where the touches are printed.
+/// @param seconds How long to watch.
+/// @return Process status.
+int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
+{
+    std::array<std::uint8_t, protocol::PaddedReportSize + 1> buffer {};
+    std::map<std::uint8_t, std::size_t> seen;
+    std::size_t touches = 0;
+
+    writeLine(console, "{:>6}  {:>5}  {:>5}  {}", "flags", "x", "y", "phase");
+
+    auto const deadline = std::chrono::steady_clock::now() + std::chrono::seconds { seconds };
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        auto const bytesRead = transport.read(buffer, std::chrono::milliseconds { 200 });
+        if (!bytesRead)
+        {
+            writeErrorLine(console, "the read failed");
+            return EXIT_FAILURE;
+        }
+        if (*bytesRead == 0)
+            continue;
+
+        auto const payload = protocol::reportPayload(std::span { buffer }.first(*bytesRead));
+        if (payload.empty() || payload[protocol::EventTypeOffset] != protocol::ScreenTouchEventType)
+            continue;
+
+        auto const report = protocol::decodeReport(payload);
+        ++touches;
+        ++seen[report.touchFlags];
+        writeLine(console,
+                  "  0x{:02x}  {:>5}  {:>5}  {}",
+                  report.touchFlags,
+                  report.touchX,
+                  report.touchY,
+                  report.isScreenTouch ? "down" : "up");
+    }
+
+    writeLine(console, "");
+    writeLine(console, "{} touch reports, and the flags byte took these values:", touches);
+    for (auto const& [flags, count]: seen)
+        writeLine(console, "  0x{:02x}  {} times", flags, count);
+    if (touches == 0)
+        writeErrorLine(console, "nothing arrived -- is another program holding the deck?");
+
+    return touches > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
 /// Watches the deck's per-track meters and reports what each one peaked at.
 ///
 /// The routing map in scripts/setup-audio.sh was established by ear, because the
@@ -254,6 +453,9 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --effect <cmd> <0|1>   toggle one known effect enable");
     writeErrorLine(console, "  --level <1|2> <knob> <00..14>  set one track's level in one mix (hex)");
     writeErrorLine(console, "  --meters [seconds]     watch the per-track meters, and report their peaks");
+    writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
+    writeErrorLine(console, "  --try <addr> <value> [seconds] [--fenced]");
+    writeErrorLine(console, "                         write one byte, wait while you look at the deck, put it back");
     writeErrorLine(console, "");
     writeErrorLine(console, "  knobs, as printed on the deck:");
     writeErrorLine(console, "    {}", []() {
@@ -291,6 +493,32 @@ int main(int argc, char* argv[])
     {
         dumpKnownRegisters(transport, console);
         return EXIT_SUCCESS;
+    }
+
+    if (command == "--touches" && argc <= 3)
+    {
+        auto const seconds = argc == 3 ? parseHex(arguments[2]) : std::optional<unsigned> { 20 };
+        if (!seconds || *seconds == 0 || *seconds > 600)
+        {
+            writeErrorLine(console, "--touches takes a number of seconds, 1 to 600");
+            return EXIT_FAILURE;
+        }
+
+        return watchTouches(transport, console, static_cast<int>(*seconds));
+    }
+
+    if (command == "--try" && argc >= 4 && argc <= 6)
+    {
+        auto const asked = parseTry(arguments);
+        if (!asked)
+        {
+            writeErrorLine(console,
+                           "usage: --try <addr 00..ff> <value 00..ff> [seconds 1..600] [--fenced]");
+            return EXIT_FAILURE;
+        }
+
+        return tryRegister(
+            transport, console, asked->address, asked->value, asked->seconds, asked->fenced);
     }
 
     if (command == "--meters" && argc <= 3)
