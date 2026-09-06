@@ -205,7 +205,9 @@ void writeSpec(Document& out)
              "other report. |",
              EventTypeOffset,
              hex(ScreenTouchEventType));
-    out.line("| `{:#04x}` | touch flags — seven values seen, meaning unknown |", TouchFlagsOffset);
+    out.line("| `{:#04x}` | touch flags — fixed per contact and only ever counting up; what "
+             "the value means is unknown |",
+             TouchFlagsOffset);
     out.line("| `{:#04x}` | touch x, little-endian |", TouchXOffset);
     out.line("| `{:#04x}` | touch y, little-endian |", TouchYOffset);
     out.line("| `{:#04x}` | knob push bitmask |", KnobPushOffset);

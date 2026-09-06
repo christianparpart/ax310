@@ -114,12 +114,20 @@ What the deck exposes:
   1367 touches from the deck: read little-endian every one landed inside
   800×480; read big-endian none did.
 
-  **Contact is signalled by the report type, not by any flag.** While a finger
-  is down the deck sends screen-touch reports and nothing else — measured over a
-  4.8-second hold: 45 consecutive touch reports, no ordinary report interleaved,
-  the coordinate constant and correct. They start when the finger lands and stop
-  when it lifts, and there is no release event: the lift is the first ordinary
-  report afterwards.
+  **Contact is signalled by the report type, not by any flag.** While a finger is
+  down the deck sends screen-touch reports and **suppresses its ordinary
+  heartbeat** — idle it reports 10 to 15 times a second, and eight seconds of
+  dragging carried nine ordinary reports in one run and none in another, where
+  eighty would be expected. That is why the lift is the first ordinary report
+  afterwards: the deck really does go quiet for the touch, so the rule reads a
+  signal rather than getting lucky.
+
+  Two measurements of a *stationary* finger disagree, and neither is retracted.
+  One counted 45 consecutive touch reports across a 4.8-second hold, the
+  coordinate constant. A later one counted a single report per press followed by
+  silence — 370 reports carrying one `0x00 -> 0x00` transition. One motionless
+  five-second hold, counting reports, would settle it; until then nothing should
+  depend on a held finger repeating.
 
   Byte 1 carries flags nobody has explained. It was read as a contact flag, and
   that was wrong in an expensive way: a finger held still reports `0x00` for the
@@ -1007,10 +1015,16 @@ known fix, not a precedent to copy:
    the input report, the touch flags byte, the `0xc0`/`0xe0` record writes, the
    mix/colour register, and which of the two mixes is the audience one are the
    other open questions.
-6. **The touch flags byte is unexplained.** Seven values have been seen with a
-   finger down and nothing distinguishes them yet; the driver ignores the byte
-   entirely and takes contact from the report type, which is what the hardware
-   actually signals.
+6. **The touch flags byte is unexplained, and four readings of it are dead.** It
+   is fixed per contact and only ever counts up: every contact starts at `0x00`,
+   and in roughly 1400 transitions none went down or returned to `0x00`. `0x00`
+   is the not-moving state. It is *not* a counter (a counter cycles), not an
+   accumulator of distance or time (one contact flipped at 28 px / 471 ms and
+   another at 17 px / 47 ms), not a magnitude (the slow gesture reached the
+   higher value), not a gesture class (five flicks and five press-drags produced
+   no `0x14`), and not finger count (the panel tracks one finger). The driver
+   ignores the byte and takes contact from the report type, which is what the
+   hardware actually signals.
 7. **QML cannot name the driver's enums.** They are declared in Qt-free headers,
    so moc never sees the enumerators and `Q_ENUM_NS` is unavailable;
    `registerDeviceMetaTypes()` makes them marshal, but the QML handlers still

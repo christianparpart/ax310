@@ -33,7 +33,7 @@ The report is **mixed-endian**: touch coordinates are little-endian and the audi
 | Offset | Field |
 | --- | --- |
 | `0x00` | event type; `0x10` is a screen touch. The button bitmask on any other report. |
-| `0x01` | touch flags — seven values seen, meaning unknown |
+| `0x01` | touch flags — fixed per contact and only ever counting up; what the value means is unknown |
 | `0x02` | touch x, little-endian |
 | `0x04` | touch y, little-endian |
 | `0x06` | knob push bitmask |

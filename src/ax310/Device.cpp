@@ -654,7 +654,13 @@ void Device::dispatchEvent(protocol::InputReport const& report)
         auto const y = report.touchY;
 
         if (_isTouchDown && x == _touchX && y == _touchY)
-            return; // A held finger repeats its position five times a second.
+            // Duplicate positions do arrive -- a fifth of the reports in one
+            // drag carried no movement -- so this guard earns its place. Whether
+            // a *stationary* finger repeats is disputed: one measurement counted
+            // 45 reports across a 4.8-second hold, a later one counted a single
+            // report per press. Protocol.hpp records both. Nothing here depends
+            // on which is right.
+            return;
 
         auto const phase = _isTouchDown ? TouchPhase::Moved : TouchPhase::Pressed;
         _isTouchDown = true;

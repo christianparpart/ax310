@@ -59,7 +59,7 @@ struct InputReport
     std::array<int, 6> audioMeters {};
 
     bool isScreenTouch = false;  ///< Whether a finger is on the glass.
-    std::uint8_t touchFlags = 0; ///< Byte 1 of a touch report; meaning unknown.
+    std::uint8_t touchFlags = 0; ///< Byte 1 of a touch report; latches per contact, see below.
     int touchX = 0;
     int touchY = 0;
 };
@@ -1001,15 +1001,45 @@ inline constexpr std::uint8_t PhysicalButtonMask = [] {
 // all two-finger input produced no events at all. Only a single finger being
 // dragged sets it non-zero, which is why dragging was the one thing that worked.
 //
-// Contact is signalled by the report TYPE, not by this byte. Measured over a
-// 4.8-second hold: 45 consecutive reports, every one of them a screen-touch
-// report, no ordinary report interleaved, the coordinate constant and correct.
-// The reports start when the finger lands and stop when it lifts; the deck sends
-// no release event of its own.
+// Contact is signalled by the report TYPE, not by this byte. The reports start
+// when the finger lands and stop when it lifts; the deck sends no release event
+// of its own, and it suppresses its ordinary heartbeat for the whole touch --
+// idle it reports 10 to 15 times a second, and eight seconds of dragging carried
+// nine such reports in one run and none in another. That is why treating the
+// first non-ordinary report as the lift works.
+//
+// **Two measurements of a stationary finger disagree and neither has been
+// retracted.** One holds that a 4.8-second hold produced 45 consecutive
+// screen-touch reports with the coordinate constant, about nine a second. The
+// other, taken later with --touches, holds that five separate presses each
+// produced exactly one report and then silence long enough to look like a lift:
+// 370 reports carried a single 0x00 -> 0x00 transition. Both were measured on
+// this deck. What would settle it is one deliberate motionless hold of about five
+// seconds, counting the reports -- and until somebody does that, code should not
+// rely on a held finger repeating.
 //
 // Values seen with a finger down: 0x00, 0x10, 0x14, 0x18, 0x1c, 0x48, 0x49.
-// What separates them is still unknown -- it is not speed, and it is not finger
-// count, both of which the captures refused.
+//
+// What it is: a value that is fixed per contact and only ever counts UP. Every
+// contact begins at 0x00, and across roughly 1400 measured transitions not one
+// went downward and none returned to 0x00. 0x00 is the not-moving state -- it
+// carried movement in 3 of 36 reports where the others carried it in 76 to 100
+// per cent of theirs.
+//
+// What it is not, each measured and refuted rather than argued away:
+//   * a counter -- a counter cycles, and this latches;
+//   * an accumulator of distance or time -- one contact flipped after 28 px and
+//     471 ms, another after 17 px and 47 ms, so no threshold in either unit fires
+//     at both;
+//   * a magnitude -- the slow gesture settled at 0x1c and the fast one at 0x14,
+//     and 0x14 carried a mean step of 40 px in one run and 2 px in another;
+//   * a gesture class -- five deliberate flicks and five deliberate press-drags
+//     produced no 0x14 at all;
+//   * finger count -- the panel does not track more than one finger, so 0x48 and
+//     0x49 are not that either.
+//
+// Four readings have now died. The bit that separates 0x14 from 0x1c is 0x08 and
+// nobody knows what it means; it is left alone rather than given a fifth guess.
 
 /// Trims what the transport delivered down to a report, or rejects it.
 ///
