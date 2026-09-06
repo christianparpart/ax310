@@ -182,6 +182,17 @@ captures name them.
 - ~~**Surround brightness reaches the strip twice.**~~ It does not. Byte 4 is the
   frequency and nothing else; brightness is applied to the colour, `0x19` to
   `0xff`, in every mode and on every light this device has.
+- ~~**`ShutdownPayloads` has never been decoded.**~~ Both sequences are now
+  written command by command. Shutdown is short and almost entirely legible:
+  darken the four buttons, dim and darken the rings, turn the surround strip off,
+  set `DisplayPower` to `0x02` — bracketed twice by two writes in groups `0x04`
+  and `0x09` that remain unidentified.
+- **Five command groups are unidentified** — `0x01`, `0x03`, `0x04`, `0x09` and
+  `0xa0` appear in the captured sequences with addresses and lengths but no known
+  meaning. `0x10` (properties) and `0x0a` (the display) are the only two
+  understood. Whatever wakes the hardware is most likely among them, since
+  everything else in the init sequence is now accounted for as either
+  interrogation or settings.
 - **Byte 4 in solid mode does something, and we do not know what.** The vendor
   never varies it usefully — `0xfb` for all ten colour presets and at both ends of
   the brightness slider — but driving it by hand produces colour effects on the

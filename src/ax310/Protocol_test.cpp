@@ -627,3 +627,26 @@ TEST_CASE("brightness is carried by the colour, not by a field", "[protocol][sur
     CHECK(scaledChannel(0xff, -10) == MinLightChannel);
     CHECK(scaledChannel(0xff, 500) == MaxLightChannel);
 }
+
+TEST_CASE("the vendor sequences carry nothing past their stated length", "[protocol][commands]")
+{
+    using namespace ax310;
+
+    // The captured button-colour records arrived with the vendor application's
+    // own memory in the padding -- heap pointers, and one module address repeated
+    // across several records. The deck reads the length field and no further, so
+    // the padding is ours to zero, and this keeps it that way: a payload
+    // transcribed from a fresh capture would fail here rather than quietly ship
+    // somebody's process image.
+    auto const trailingIsZero = [](protocol::Payload const& payload) {
+        auto const stated = payload[0] == protocol::FramedCommandMarker
+                                ? std::size_t { payload[2] }
+                                : std::size_t { payload[3] } + 4;
+        return std::all_of(std::next(payload.begin(), static_cast<std::ptrdiff_t>(stated)),
+                           payload.end(),
+                           [](std::uint8_t byte) { return byte == 0; });
+    };
+
+    CHECK(std::ranges::all_of(commands::InitPayloads, trailingIsZero));
+    CHECK(std::ranges::all_of(commands::ShutdownPayloads, trailingIsZero));
+}

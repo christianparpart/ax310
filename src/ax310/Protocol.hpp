@@ -145,8 +145,53 @@ enum class CommandKind : std::uint8_t
     Get = 0x81
 };
 
-/// Second byte of a property command. The only group seen so far.
+/// Second byte of a command: which group of things it addresses.
+///
+/// `0x10` is the properties -- the mixer levels, the LED registers, everything
+/// with a name in PropertyNames -- and it was long taken for the only group there
+/// was. It is not. The captured sequences use six more, and the display's
+/// brightness turned out to live in one of them:
+///
+///   | group  | seen doing |
+///   | ------ | ---------- |
+///   | `0x01` | read three times by init, address and length both zero |
+///   | `0x03` | written once by init, `01 03 01` |
+///   | `0x04` | written twice by shutdown, `01 04 01` |
+///   | `0x09` | written by both, `01 09 02` |
+///   | `0x0a` | the display: brightness and blanking, see DisplayGroup |
+///   | `0x10` | properties |
+///   | `0xa0` | read with length 1, written with length 4, both all-zero |
+///
+/// The four bytes read the same way in every group -- kind, group, address,
+/// length, then that many values -- so all of them go through commandAt(). What
+/// an address *means* is the group's own business, and for five of these nobody
+/// knows. Since everything else in the init sequence is now accounted for as
+/// either interrogation or somebody's settings, whatever actually wakes the
+/// hardware is most likely among them.
 inline constexpr std::uint8_t PropertyGroup = 0x10;
+
+/// Builds any command in the four-byte grammar every group shares.
+///
+/// @param kind Read or write.
+/// @param group Which group the address belongs to; see PropertyGroup.
+/// @param address What to address within it.
+/// @param values The values to write, empty for a read.
+/// @param length The length byte, when it is not simply the number of values --
+///        a read states how much it expects back and carries no values.
+/// @return The full 64-byte payload.
+[[nodiscard]] constexpr Payload commandAt(CommandKind kind, std::uint8_t group,
+                                          std::uint8_t address,
+                                          std::span<std::uint8_t const> values,
+                                          std::size_t length = 0) noexcept
+{
+    Payload payload {};
+    payload[0] = static_cast<std::uint8_t>(kind);
+    payload[1] = group;
+    payload[2] = address;
+    payload[3] = static_cast<std::uint8_t>(values.empty() ? length : values.size());
+    std::ranges::copy(values, std::next(payload.begin(), 4));
+    return payload;
+}
 
 /// The four function buttons' colour, written one button at a time to `0xc0`.
 ///
@@ -447,11 +492,12 @@ inline constexpr std::uint8_t PanelOffLevel = 0xff;
 /// @return The payload to frame and send.
 [[nodiscard]] constexpr Payload displayCommand(std::uint8_t level) noexcept
 {
-    Payload payload {};
-    payload[0] = static_cast<std::uint8_t>(CommandKind::Set);
-    payload[1] = DisplayGroup;
-    payload[2] = level;
-    return payload;
+    // The level goes in the address slot, not a value slot, and the length stays
+    // zero. Read in the grammar every group shares, this group takes its argument
+    // as the thing it addresses -- which is why the command is three bytes with
+    // no room for a value. The captured init writes 0xaa here, outside the
+    // brightness range and not the off sentinel; see Commands.hpp.
+    return commandAt(CommandKind::Set, DisplayGroup, level, {});
 }
 
 /// Addresses that must not be written.
@@ -600,13 +646,15 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 [[nodiscard]] constexpr Payload setPropertyAt(std::uint8_t address,
                                               std::span<std::uint8_t const> values) noexcept
 {
-    Payload payload {};
-    payload[0] = static_cast<std::uint8_t>(CommandKind::Set);
-    payload[1] = PropertyGroup;
-    payload[2] = address;
-    payload[3] = static_cast<std::uint8_t>(values.size());
-    std::ranges::copy(values, std::next(payload.begin(), 4));
-    return payload;
+    return commandAt(CommandKind::Set, PropertyGroup, address, values);
+}
+
+/// @param address The address to write.
+/// @param value Its new value, when that is a single byte -- which most are.
+/// @return The full 64-byte payload.
+[[nodiscard]] constexpr Payload setPropertyAt(std::uint8_t address, std::uint8_t value) noexcept
+{
+    return setPropertyAt(address, std::span { &value, 1 });
 }
 
 /// @param address The address to read, named or not.
@@ -614,12 +662,7 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 /// @return The full 64-byte payload.
 [[nodiscard]] constexpr Payload getPropertyAt(std::uint8_t address, std::size_t length) noexcept
 {
-    Payload payload {};
-    payload[0] = static_cast<std::uint8_t>(CommandKind::Get);
-    payload[1] = PropertyGroup;
-    payload[2] = address;
-    payload[3] = static_cast<std::uint8_t>(length);
-    return payload;
+    return commandAt(CommandKind::Get, PropertyGroup, address, {}, length);
 }
 
 /// @param property The property to write.
@@ -1153,6 +1196,39 @@ inline constexpr auto FramedCommandNames = std::to_array<WireName>({
         sum += payload[index];
 
     return static_cast<std::uint8_t>(sum & 0xFF);
+}
+
+/// Builds one command in the framed family, checksum included.
+///
+/// @param command Which command.
+/// @param body Its parameter bytes, which may be empty.
+/// @return The full 64-byte payload, ready to be framed and sent.
+[[nodiscard]] constexpr Payload framedPayload(FramedCommand command,
+                                              std::span<std::uint8_t const> body) noexcept
+{
+    Payload payload {};
+    payload[0] = FramedCommandMarker;
+    payload[1] = 0x00;
+    payload[2] = static_cast<std::uint8_t>(body.size() + FramedOverhead);
+    payload[3] = static_cast<std::uint8_t>(command);
+    std::ranges::copy(body, std::next(payload.begin(), 4));
+    payload[payload[2] - 1] = framedChecksum(payload);
+    return payload;
+}
+
+/// @param command Which command.
+/// @param value Its parameter, when the command takes a single byte.
+/// @return The full 64-byte payload.
+[[nodiscard]] constexpr Payload framedPayload(FramedCommand command, std::uint8_t value) noexcept
+{
+    return framedPayload(command, std::span { &value, 1 });
+}
+
+/// @param command Which command, when it takes no parameters at all.
+/// @return The full 64-byte payload.
+[[nodiscard]] constexpr Payload framedPayload(FramedCommand command) noexcept
+{
+    return framedPayload(command, std::span<std::uint8_t const> {});
 }
 
 /// Event type byte identifying a screen touch in InputReport::event.
