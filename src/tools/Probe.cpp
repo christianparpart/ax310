@@ -338,6 +338,8 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
     // instantaneous speed from one that accumulates, and the two runs so far
     // disagree about which this is.
     std::string contactLog;
+    std::size_t closingReports = 0;
+    int closingTravel = 0;
     std::size_t reportsInContact = 0;
     int travelInContact = 0;
     auto contactBegan = Clock::now();
@@ -386,7 +388,9 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
             reportsInContact = 0;
             travelInContact = 0;
             contactBegan = now;
-            contactLog += std::format("  contact {:<3} 0x{:02x}", contacts, report.touchFlags);
+            if (contacts > 1)
+                contactLog += std::format("   [{} reports, {} px]", closingReports, closingTravel);
+            contactLog += std::format("\n  contact {:<3} 0x{:02x}", contacts, report.touchFlags);
         }
         else
             ++followedBy[{ *previousFlags, report.touchFlags }];
@@ -412,6 +416,8 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
 
         ++reportsInContact;
         travelInContact += step;
+        closingReports = reportsInContact;
+        closingTravel = travelInContact;
         if (!isNewContact && report.touchFlags != *previousFlags)
         {
             auto const elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -442,7 +448,7 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
 
     writeLine(console, "");
     writeLine(console, "Each contact, and where along it the value changed:");
-    writeLine(console, "{}", contactLog);
+    writeLine(console, "{}   [{} reports, {} px]", contactLog, closingReports, closingTravel);
 
     writeLine(console, "");
     writeLine(console, "And how much the finger was moving when each value was reported:");

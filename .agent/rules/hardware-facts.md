@@ -205,10 +205,27 @@ A second run, 638 reports across 11 contacts, sharpened it:
   for 155 reports and another went straight to `0x1c`, and the mean step was 2
   pixels in both.
 
-So the reading is an accumulator that saturates rather than a state that follows
-speed -- something like distance or time since the contact began. `--touches`
-now prints a line per contact saying how many reports, how many pixels and how
-many milliseconds in the value changed, which is what separates those two.
+That reading -- an accumulator, distance or time since the contact began -- was
+then measured and **refuted**. A run of one slow short drag and one fast long
+swipe flipped after 28 px / 471 ms and 17 px / 47 ms respectively. Neither a
+fixed distance nor a fixed duration fires at both, and the two times differ by an
+order of magnitude.
+
+The same run put the level ordering in doubt. The **slow** gesture settled at
+`0x1c` and the **fast** one at `0x14`, which is backwards for a magnitude that
+saturates -- and `0x14` carried a mean step of 40 pixels there against 2 in the
+run before it, so the level does not track speed either.
+
+What survives is that the value classifies the contact from how it begins, and is
+fixed early. `0x14` and `0x1c` differ in one bit, `0x08`. The candidate is
+press-then-drag against immediate flick -- the slow contact dwelled 471 ms before
+moving and the fast one 47 ms. **Two contacts cannot establish that**, and it is
+recorded here as the surviving guess rather than a finding.
+
+What would settle it: ten or more contacts of two deliberate kinds, five of each,
+alternating -- an immediate flick with no pause, and a press held about a second
+before dragging. If the flicks all report one value and the press-drags the other,
+that is the answer; if they do not, the bit means something else.
 
 `0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
 They are **not** the two-finger case: the deck's owner reports the panel simply
