@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Protocol.hpp"
+#include "Types.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <variant>
 #include <vector>
-
-#include "Protocol.hpp"
-#include "Types.hpp"
 
 namespace ax310
 {

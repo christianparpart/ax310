@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Types.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -9,8 +11,6 @@
 #include <optional>
 #include <span>
 #include <string_view>
-
-#include "Types.hpp"
 
 /// Wire layout of the AX310's HID reports.
 ///

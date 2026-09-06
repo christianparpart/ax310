@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "IHidTransport.hpp"
+#include "Protocol.hpp"
+
 #include <algorithm>
 #include <deque>
 #include <map>
 #include <optional>
 #include <utility>
-
-#include "IHidTransport.hpp"
-#include "Protocol.hpp"
 
 namespace ax310
 {

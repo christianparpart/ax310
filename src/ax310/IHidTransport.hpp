@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Types.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +11,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "Types.hpp"
 
 namespace ax310
 {

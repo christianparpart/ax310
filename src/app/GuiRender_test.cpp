@@ -10,7 +10,11 @@
 /// deck demands, it is not blank, its background is the colour it should be, and
 /// it changes when the device state changes.
 
-#include <catch2/catch_test_macros.hpp>
+#include <app/DeviceBridge.hpp>
+#include <ax310/FakeHidTransport.hpp>
+#include <ax310/IClock.hpp>
+#include <ax310/ILogger.hpp>
+#include <ax310/Protocol.hpp>
 
 #include <QColor>
 #include <QEventLoop>
@@ -23,15 +27,12 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QUrl>
+
+#include <catch2/catch_test_macros.hpp>
+
 #include <cstdlib>
 #include <map>
 #include <vector>
-
-#include <app/DeviceBridge.hpp>
-#include <ax310/FakeHidTransport.hpp>
-#include <ax310/IClock.hpp>
-#include <ax310/ILogger.hpp>
-#include <ax310/Protocol.hpp>
 
 using namespace ax310;
 

@@ -137,6 +137,17 @@ if(AX310_BUILD_TESTS)
             PROPERTIES SKIP_RETURN_CODE 4
             DL_PATHS "$<TARGET_FILE_DIR:Qt6::Core>")
 
+        # Our own headers go first, and .clang-format is what decides that. It
+        # arrived from another project naming that project's libraries, so
+        # <ax310/...> matched nothing and sorted last -- and clang-format moved
+        # this project's headers to the bottom of every file it touched, one at a
+        # time, until somebody noticed in review. This is what notices now.
+        add_test(NAME "includes are ordered the way .clang-format says"
+                 COMMAND "${CMAKE_COMMAND}" -E env python3
+                         "${PROJECT_SOURCE_DIR}/scripts/check-include-order.py")
+        set_tests_properties("includes are ordered the way .clang-format says"
+                             PROPERTIES SKIP_RETURN_CODE 4)
+
         # A second run of the same binary, against the real scene graph.
         #
         # Everything above pins the software renderer, which is what lets it run

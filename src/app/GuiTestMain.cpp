@@ -11,10 +11,10 @@
 /// runner has neither a screen nor a driver, and neither does a session where the
 /// deck's owner is away from the machine.
 
-#include <catch2/catch_session.hpp>
-
 #include <QGuiApplication>
 #include <QQuickWindow>
+
+#include <catch2/catch_session.hpp>
 
 #include <cstdio>
 #include <cstdlib>

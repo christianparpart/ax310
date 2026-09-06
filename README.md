@@ -186,7 +186,7 @@ the Qt-free rule: `src/ax310` links hidapi and nothing else.
 
 ## Testing
 
-138 tests, no hardware required.
+139 tests, no hardware required.
 
 Driver tests run against a scripted `FakeHidTransport`. The **rendering tests**
 drive real QML through the software scene graph with the offscreen platform, so

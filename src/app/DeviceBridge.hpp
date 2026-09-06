@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <QByteArray>
-#include <QStringList>
-#include <QVariantList>
-#include <QList>
-#include <QObject>
-#include <atomic>
-#include <memory>
-#include <thread>
-
 #include <ax310/Device.hpp>
 #include <ax310/Event.hpp>
 #include <ax310/HidApiTransport.hpp>
 #include <ax310/IClock.hpp>
 #include <ax310/ILogger.hpp>
 #include <ax310/Types.hpp>
+
+#include <QByteArray>
+#include <QList>
+#include <QObject>
+#include <QStringList>
+#include <QVariantList>
+
+#include <atomic>
+#include <memory>
+#include <thread>
 
 namespace ax310::app
 {

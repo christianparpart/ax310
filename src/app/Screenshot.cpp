@@ -7,12 +7,11 @@
 /// scripted transport the tests use, so the images in README.md are reproducible
 /// by anyone with a checkout -- and wrong only if the interface itself changed.
 
+#include <app/DeviceBridge.hpp>
 #include <ax310/FakeHidTransport.hpp>
 #include <ax310/IClock.hpp>
 #include <ax310/ILogger.hpp>
 #include <ax310/Protocol.hpp>
-
-#include <app/DeviceBridge.hpp>
 
 #include <QDir>
 #include <QEventLoop>

@@ -19,6 +19,9 @@
 ///   ax310_spec --write PATH   write it to PATH
 ///   ax310_spec --check PATH   exit non-zero if PATH is not what would be written
 
+#include <ax310/Protocol.hpp>
+#include <ax310/Types.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
@@ -29,9 +32,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <ax310/Protocol.hpp>
-#include <ax310/Types.hpp>
 
 using namespace ax310;
 

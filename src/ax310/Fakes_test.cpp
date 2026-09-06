@@ -3,14 +3,15 @@
 // its own bugs -- it reports the subject's, wrongly. These cases pin the parts of
 // the doubles that a case could otherwise misread as a finding about the driver.
 
-#include <catch2/catch_test_macros.hpp>
-
-#include <chrono>
-
-#include <Printers.hpp>
 #include <ax310/Event.hpp>
 #include <ax310/FakeHidTransport.hpp>
 #include <ax310/IClock.hpp>
+
+#include <Printers.hpp>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <chrono>
 
 using namespace ax310;
 using namespace std::chrono_literals;
