@@ -174,3 +174,29 @@ driven**: the vendor writes `0x21` (`0x80` Single, `0x00` Dual) alongside `0x22`
 but `0x21` also selects which knob rings light, and which of the two it is doing
 has never been settled on the hardware. In Dual Mix the MIC knob drives the
 creator mix *and* the chat mic together.
+
+## The touch flags byte at report offset 0x01
+
+Still unnamed, but no longer shapeless. Measured over 136 reports and 6 contacts,
+with `ax310_probe --touches`:
+
+- **Every contact begins with `0x00`.** Six of six, and no other value ever
+  started one.
+- **The change is one-way.** `0x00 -> 0x1c` was seen once; `0x1c -> 0x00` never.
+  Within a contact the value latches on and stays -- all 71 `0x1c` reports in
+  that run belonged to a single contact, while five other contacts stayed at
+  `0x00` throughout.
+- **So it is not a counter**, which was the standing guess. A counter cycles;
+  this does not. `0x10`, `0x14`, `0x18` and `0x1c` are `0x10 | (n << 2)` for
+  n = 0..3 and look exactly like a two-bit field, which is what made the guess
+  attractive -- but an earlier run counted them 94, 50, 12 and 166 times, and no
+  counter is that uneven. A saturating ramp is, with `0x1c` as the top.
+
+The live hypothesis is that it marks a contact that has become a drag: taps and
+holds stayed at `0x00`, and the one contact that moved is the one that latched.
+Untested -- what settles it is whether `0x1c` reports carry movement and `0x00`
+reports do not, which `--touches` now measures directly.
+
+`0x48` and `0x49` are a separate shape -- bits 6, 3 and 0 -- and appear rarely.
+Whether they are the two-finger case is open; `Protocol.hpp` currently says two
+fingers produce no events at all, which one run appeared to contradict.

@@ -329,6 +329,9 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
     std::map<std::uint8_t, std::size_t> seen;
     std::map<std::pair<std::uint8_t, std::uint8_t>, std::size_t> followedBy;
     std::map<std::uint8_t, std::size_t> startsAContact;
+    std::map<std::uint8_t, std::size_t> movedWith;
+    std::map<std::uint8_t, int> travelWith;
+    std::map<std::uint8_t, int> furthestWith;
 
     std::size_t touches = 0;
     std::size_t contacts = 0;
@@ -373,6 +376,16 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
         else
             ++followedBy[{ *previousFlags, report.touchFlags }];
 
+        // How far the finger moved since the previous report, which is what tells
+        // a movement flag from a counter.
+        auto const step = isNewContact ? 0
+                                       : std::abs(report.touchX - previousX)
+                                             + std::abs(report.touchY - previousY);
+        travelWith[report.touchFlags] += step;
+        furthestWith[report.touchFlags] = std::max(furthestWith[report.touchFlags], step);
+        if (step > 0)
+            ++movedWith[report.touchFlags];
+
         writeLine(console,
                   " 0x{:02x}  {:>5}  {:>5}  {:>6}  {:>6}  {}",
                   report.touchFlags,
@@ -398,6 +411,22 @@ int watchTouches(HidApiTransport& transport, IConsole& console, int seconds)
                   flags,
                   count,
                   startsAContact.contains(flags) ? startsAContact.at(flags) : 0);
+
+    writeLine(console, "");
+    writeLine(console, "And how much the finger was moving when each value was reported:");
+    writeLine(console, "  {:>5}  {:>10}  {:>10}  {:>10}", "flags", "moving", "mean step", "worst step");
+    for (auto const& [flags, count]: seen)
+    {
+        auto const moving = movedWith.contains(flags) ? movedWith.at(flags) : 0;
+        auto const travel = travelWith.contains(flags) ? travelWith.at(flags) : 0;
+        writeLine(console,
+                  "   0x{:02x}  {:>4} of {:<4}  {:>10}  {:>10}",
+                  flags,
+                  moving,
+                  count,
+                  count > 0 ? travel / static_cast<int>(count) : 0,
+                  furthestWith.contains(flags) ? furthestWith.at(flags) : 0);
+    }
 
     writeLine(console, "");
     writeLine(console, "Which value follows which, within one contact:");
