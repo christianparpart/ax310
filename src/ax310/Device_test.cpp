@@ -1625,29 +1625,58 @@ TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]
 
     // The vendor brackets a mode change and leaves a level drag unbracketed;
     // this follows that, so the deck sees the shape it expects. Inside the fence
-    // go the three writes a switch is made of, in the vendor's order.
+    // go the three writes a switch is made of.
     auto const& sent = harness.transport.sent();
     REQUIRE(sent.size() == 5);
 
     CHECK(sent[0].bytes[3] == 0x1d);
     CHECK(sent[0].bytes[5] == 0x01);
 
-    // The ring colour, because the record carries no mix: without this the rings
-    // keep the colour of the mix that was on before.
-    CHECK(sent[1].bytes[3] == protocol::ButtonColourAddress);
-    CHECK(sent[1].bytes[5] == protocol::KnobBank);
-    CHECK(sent[1].bytes[8] == protocol::MixRingColours[indexOf(MixId::Audience)].red);
-    CHECK(sent[1].bytes[9] == protocol::MixRingColours[indexOf(MixId::Audience)].green);
-    CHECK(sent[1].bytes[10] == protocol::MixRingColours[indexOf(MixId::Audience)].blue);
-
     // KnobLedSelect, which is what moves the levels the rings display.
-    CHECK(sent[2].bytes[3] == static_cast<std::uint8_t>(protocol::Property::KnobLedSelect));
-    CHECK(sent[2].bytes[5] == protocol::KnobLedSelectForMix[indexOf(MixId::Audience)]);
+    CHECK(sent[1].bytes[3] == static_cast<std::uint8_t>(protocol::Property::KnobLedSelect));
+    CHECK(sent[1].bytes[5] == protocol::KnobLedSelectForMix[indexOf(MixId::Audience)]);
 
-    CHECK(sent[3].bytes[3] == 0x15);
-    CHECK(sent[3].bytes[5] == 0x01);
+    CHECK(sent[2].bytes[3] == 0x15);
+    CHECK(sent[2].bytes[5] == 0x01);
+
+    // The ring colour last, and after the switch. A record cannot be aimed at a
+    // mix -- the deck applies it to the one selected when it arrives -- so a
+    // colour sent ahead of the switch lands on the mix being left, and the deck
+    // ends up an orange panel above blue rings.
+    CHECK(sent[3].bytes[3] == protocol::ButtonColourAddress);
+    CHECK(sent[3].bytes[5] == protocol::KnobBank);
+    CHECK(sent[3].bytes[8] == protocol::MixRingColours[indexOf(MixId::Audience)].red);
+    CHECK(sent[3].bytes[9] == protocol::MixRingColours[indexOf(MixId::Audience)].green);
+    CHECK(sent[3].bytes[10] == protocol::MixRingColours[indexOf(MixId::Audience)].blue);
+
     CHECK(sent[4].bytes[3] == 0x1d);
     CHECK(sent[4].bytes[5] == 0x00);
+}
+
+TEST_CASE("the ring colour is written after the mix it belongs to", "[device][mix]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
+
+    // Stated on its own, because the order is the whole point and a positional
+    // case above it can be repaired into agreeing with whatever the code does.
+    // The record carries no mix, so what it lands on is decided by what was
+    // selected when it arrived.
+    auto const& sent = harness.transport.sent();
+
+    auto const selected = std::ranges::find_if(sent, [](FakeHidTransport::Sent const& one) {
+        return one.bytes.size() > 5 && one.bytes[3] == static_cast<std::uint8_t>(protocol::Property::SelectedMix);
+    });
+    auto const coloured = std::ranges::find_if(sent, [](FakeHidTransport::Sent const& one) {
+        return one.bytes.size() > 5 && one.bytes[3] == protocol::ButtonColourAddress
+               && one.bytes[5] == protocol::KnobBank;
+    });
+
+    REQUIRE(selected != sent.end());
+    REQUIRE(coloured != sent.end());
+    CHECK(std::distance(sent.begin(), selected) < std::distance(sent.begin(), coloured));
 }
 
 TEST_CASE("a turn after a mix switch starts from the new mix's level", "[device][mix][decode]")

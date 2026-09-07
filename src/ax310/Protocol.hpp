@@ -486,9 +486,11 @@ inline constexpr std::uint8_t KnobLightCount = 0x0a;
 /// where the interface's own creator and audience colours come from -- so the
 /// window and the hardware say the same thing in the same language.
 ///
-/// These have to be written on every switch. The ring record carries no mix at
-/// all, so the deck colours whichever mix is selected, and a switch that does not
-/// write the new mix's colour leaves the rings showing the old one's.
+/// These have to be written on every switch, and written *after* it. The ring
+/// record carries no mix at all, so the deck colours whichever mix is selected
+/// when the record arrives: a switch that does not write the new mix's colour
+/// leaves the rings showing the old one's, and one that writes it before
+/// selecting paints the mix being left instead. See Device::selectMix.
 inline constexpr std::array<LightColour, MixCount> MixRingColours {
     LightColour { .red = 0x00, .green = 0x7d, .blue = 0xff }, // Creator, blue
     LightColour { .red = 0xff, .green = 0x7d, .blue = 0x00 }, // Audience, orange

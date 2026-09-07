@@ -535,22 +535,28 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
 
     // SelectedMix alone moves the audio and leaves the knob rings behind, showing
     // the mix that was on before with the colour it had. Two other writes are what
-    // move them, and the vendor sends all three inside one fence:
+    // move them, and all three go inside one fence:
     //
+    //   * KnobLedSelect, which decides the levels the rings display;
     //   * the ring colour, because the record carries no mix -- the deck applies
-    //     it to whichever mix is selected, so the new mix's colour has to be said;
-    //   * KnobLedSelect, which is what decides the levels the rings display.
+    //     it to whichever mix is selected, so the new mix's colour has to be said.
     //
-    // The order is the vendor's, colour first and the switch last. That the colour
-    // written before the switch ends up on the mix being switched *to* is what the
-    // fence is presumably for.
+    // The colour goes **after** the switch, which is not the order the vendor's
+    // capture has. A record cannot be aimed at a mix, and the deck applies it to
+    // the one that is selected when it arrives, so a colour sent ahead of the
+    // switch is a colour written onto the mix being left. That is what a deck on
+    // the audience mix showing blue rings under an orange panel is: every switch
+    // painting the mix behind it, one step out of step forever.
+    //
+    // The vendor's order was replayed on the assumption that the fence made the
+    // difference. It does not.
     auto const& colour = protocol::MixRingColours[indexOf(mix)];
     auto const record = protocol::knobColourRecord(colour.red, colour.green, colour.blue);
 
     return writeProperty(fence, open)
-        .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
         .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
+        .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
         .and_then([&] { return writeProperty(fence, close); })
         .transform([&] {
             std::lock_guard<std::mutex> const lock { _stateMutex };

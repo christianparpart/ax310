@@ -541,9 +541,18 @@ replaying it would overwrite the level the person at the deck had chosen. `0x22`
 has no recorded meaning; the rings follow without it, so it stays unwritten until
 something shows what it does.
 
-The order is the vendor's: the colour goes out *before* the switch and still lands
-on the mix being switched to. The fence is presumably what makes that work, and
-that is an assumption rather than a measurement.
+**The colour goes out *after* the switch, and the fence does not change that.**
+Replaying the vendor's order -- colour first, switch last -- was done on the
+assumption that the fence made a colour arriving early land on the mix being
+switched to. Measured: it does not. A deck brought up on the audience mix showed
+`0x15 = 01` and `0x21 = 01`, an orange panel, orange tiles, and six **blue**
+rings. A record cannot be aimed, so the deck gives it to whichever mix is
+selected when it arrives, and a colour sent ahead of the switch paints the mix
+being left -- one step behind, on every switch, forever.
+
+Why the earlier reading said otherwise: from a state where both mixes already
+hold the same colour, the first switch looks right. It is the second that shows
+it, and the checks that had been made were single switches.
 
 ## The knob rings' colour: the same 0xc0, with byte 0 choosing the bank
 
