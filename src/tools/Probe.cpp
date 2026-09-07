@@ -149,6 +149,33 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
 
         static_cast<void>(readRegister(transport, static_cast<std::uint8_t>(protocol::Property::DisplayPower), 1));
     }
+
+    // The audience mix's levels are not in that table -- the handshake does not
+    // write them, so there is nothing to preserve -- but a mixer question is
+    // never about one block. Read here so both are on screen together, next to
+    // the two registers that say which of them the deck is monitoring and which
+    // the rings are showing.
+    writeLine(console, "");
+
+    for (auto const& extra: { protocol::PreservedAddress { .address = std::to_underlying(
+                                                               protocol::Property::AudienceMixLevels),
+                                                           .length = protocol::KnobPropertyLength } })
+    {
+        auto const values = readRegister(transport, extra.address, extra.length);
+        auto const name = protocol::nameIn(protocol::PropertyNames, extra.address);
+
+        if (!values)
+        {
+            writeLine(console, "  0x{:02x}  {:<38}  <no answer>", extra.address, name);
+            continue;
+        }
+
+        std::string text;
+        for (auto const byte: *values)
+            text += std::format("{:02x} ", byte);
+
+        writeLine(console, "  0x{:02x}  {:<38}  {}", extra.address, name, text);
+    }
 }
 
 /// Sends one prepared request and collects the answer.
