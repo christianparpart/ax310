@@ -227,7 +227,14 @@ void Device::disconnect()
     }
 
     logTo(_logger, LogLevel::Info, "Shutting the AX310 down");
-    if (auto const sent = sendSequence(commands::ShutdownPayloads, std::chrono::milliseconds { 0 }); !sent)
+
+    // Paced the same as the handshake. Sent back to back, some of these do not
+    // take: the sequence darkens the four buttons with four records to the same
+    // address one after another, and a deck shut down that way is left with one
+    // of them still lit -- a different one on different runs. The handshake
+    // already carries a gap for the same reason, and a shutdown is not a place
+    // where a tenth of a second matters.
+    if (auto const sent = sendSequence(commands::ShutdownPayloads, CommandGap); !sent)
         logTo(_logger, LogLevel::Warning, "Shutdown sequence failed: {}", describe(sent.error()));
 
     {
