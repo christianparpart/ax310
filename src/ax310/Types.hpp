@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Enumerators.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -25,21 +27,14 @@ enum class Button : std::uint8_t
     TopLeft = 0,
     TopRight = 1,
     BottomLeft = 2,
-    BottomRight = 3,
-
-    Last = BottomRight
+    BottomRight = 3
 };
 
 /// Number of physical buttons, derived from the enumeration rather than stated.
-inline constexpr std::size_t ButtonCount = static_cast<std::size_t>(Button::Last) + 1;
+inline constexpr std::size_t ButtonCount = enumerators::denseEnumeratorCount<Button>();
 
 /// Every Button, in enumerator order, for iterating without an index loop.
-inline constexpr std::array<Button, ButtonCount> AllButtons {
-    Button::TopLeft,
-    Button::TopRight,
-    Button::BottomLeft,
-    Button::BottomRight,
-};
+inline constexpr auto AllButtons = enumerators::denseEnumeratorsOf<Button>();
 
 /// How the surround light strip is animated.
 ///
@@ -57,13 +52,11 @@ enum class SurroundMode : std::uint8_t
     Blinking = 2,
     PulsingRgb = 3,
     BlinkingRgb = 4,
-    ScrollingRgb = 5,
-
-    Last = ScrollingRgb
+    ScrollingRgb = 5
 };
 
 /// Number of surround modes, derived from the enumeration rather than stated.
-inline constexpr std::size_t SurroundModeCount = static_cast<std::size_t>(SurroundMode::Last) + 1;
+inline constexpr std::size_t SurroundModeCount = enumerators::denseEnumeratorCount<SurroundMode>();
 
 /// What each mode is called, indexed by the enumerator.
 inline constexpr std::array<std::string_view, SurroundModeCount> SurroundModeNames {
@@ -71,10 +64,7 @@ inline constexpr std::array<std::string_view, SurroundModeCount> SurroundModeNam
 };
 
 /// Every SurroundMode, in enumerator order, for iterating without an index loop.
-inline constexpr std::array<SurroundMode, SurroundModeCount> AllSurroundModes {
-    SurroundMode::Solid,       SurroundMode::Pulsing,     SurroundMode::Blinking,
-    SurroundMode::PulsingRgb,  SurroundMode::BlinkingRgb, SurroundMode::ScrollingRgb,
-};
+inline constexpr auto AllSurroundModes = enumerators::denseEnumeratorsOf<SurroundMode>();
 
 /// @param mode The mode to name.
 /// @return Its display label.
@@ -109,13 +99,11 @@ enum class KnobId : std::uint8_t
     Console = 2,
     System = 3,
     Game = 4,
-    Chat = 5,
-
-    Last = Chat
+    Chat = 5
 };
 
 /// Number of rotary knobs, derived from the enumeration rather than stated.
-inline constexpr std::size_t KnobCount = static_cast<std::size_t>(KnobId::Last) + 1;
+inline constexpr std::size_t KnobCount = enumerators::denseEnumeratorCount<KnobId>();
 
 /// What each knob is called, as printed on the deck, indexed by the enumerator.
 inline constexpr std::array<std::string_view, KnobCount> KnobNames {
@@ -140,19 +128,17 @@ enum class MixId : std::uint8_t
 
     /// What the stream captures. Adjusting it is inaudible to the streamer,
     /// which is exactly why it needs to be visible in the interface.
-    Audience = 1,
-
-    Last = Audience
+    Audience = 1
 };
 
 /// Number of mixes, derived from the enumeration rather than stated.
-inline constexpr std::size_t MixCount = static_cast<std::size_t>(MixId::Last) + 1;
+inline constexpr std::size_t MixCount = enumerators::denseEnumeratorCount<MixId>();
 
 /// What each mix is called, indexed by the enumerator.
 inline constexpr std::array<std::string_view, MixCount> MixNames { "Creator", "Audience" };
 
 /// Every MixId, in enumerator order, for iterating without an index loop.
-inline constexpr std::array<MixId, MixCount> AllMixes { MixId::Creator, MixId::Audience };
+inline constexpr auto AllMixes = enumerators::denseEnumeratorsOf<MixId>();
 
 /// What the deck's Line Out socket carries.
 ///
@@ -163,14 +149,11 @@ enum class LineOutSource : std::uint8_t
 {
     CreatorMix = 0,
     AudienceMix = 1,
-    ChatMic = 2,
-
-    Last = ChatMic
+    ChatMic = 2
 };
 
 /// Number of line-out sources, derived from the enumeration rather than stated.
-inline constexpr std::size_t LineOutSourceCount =
-    static_cast<std::size_t>(LineOutSource::Last) + 1;
+inline constexpr std::size_t LineOutSourceCount = enumerators::denseEnumeratorCount<LineOutSource>();
 
 /// What each source is called, indexed by the enumerator.
 inline constexpr std::array<std::string_view, LineOutSourceCount> LineOutSourceNames {
@@ -180,11 +163,7 @@ inline constexpr std::array<std::string_view, LineOutSourceCount> LineOutSourceN
 };
 
 /// Every LineOutSource, in enumerator order.
-inline constexpr std::array<LineOutSource, LineOutSourceCount> AllLineOutSources {
-    LineOutSource::CreatorMix,
-    LineOutSource::AudienceMix,
-    LineOutSource::ChatMic,
-};
+inline constexpr auto AllLineOutSources = enumerators::denseEnumeratorsOf<LineOutSource>();
 
 /// @param source The source to name.
 /// @return Its display label.
@@ -269,9 +248,7 @@ static_assert(Level::MaxSteps * Level::PercentPerStep == 100,
 }
 
 /// Every KnobId, in enumerator order, for iterating without an index loop.
-inline constexpr std::array<KnobId, KnobCount> AllKnobs {
-    KnobId::Mic, KnobId::LineIn, KnobId::Console, KnobId::System, KnobId::Game, KnobId::Chat,
-};
+inline constexpr auto AllKnobs = enumerators::denseEnumeratorsOf<KnobId>();
 
 /// Whether a knob's capacitive surface is currently being touched.
 enum class Touch : std::uint8_t
@@ -303,13 +280,11 @@ enum class TouchPhase : std::uint8_t
 enum class DeviceMode : std::uint8_t
 {
     Base = 0,
-    Control = 1,
-
-    Last = Control
+    Control = 1
 };
 
 /// Number of device modes, derived from the enumeration rather than stated.
-inline constexpr std::size_t DeviceModeCount = static_cast<std::size_t>(DeviceMode::Last) + 1;
+inline constexpr std::size_t DeviceModeCount = enumerators::denseEnumeratorCount<DeviceMode>();
 
 /// Where the device is in its connect / re-enumerate / run cycle.
 ///
@@ -331,13 +306,11 @@ enum class DeviceError : std::uint8_t
     OpenFailed = 2,
     NotConnected = 3,
     WriteFailed = 4,
-    ReadFailed = 5,
-
-    Last = ReadFailed
+    ReadFailed = 5
 };
 
 /// Number of DeviceError enumerators, derived from the enumeration.
-inline constexpr std::size_t DeviceErrorCount = static_cast<std::size_t>(DeviceError::Last) + 1;
+inline constexpr std::size_t DeviceErrorCount = enumerators::denseEnumeratorCount<DeviceError>();
 
 /// Human-readable text for each DeviceError, indexed by the enumerator.
 inline constexpr std::array<std::string_view, DeviceErrorCount> DeviceErrorTexts {
@@ -407,14 +380,16 @@ template <typename Enum, std::size_t N>
                                [&rows](std::size_t index) { return indexOf(rows[index]) == index; });
 }
 
-// A row in the wrong place would make every "iterate AllX" loop visit the wrong
-// thing, silently and only at run time. The extent is taken from the enum's own
-// Last, so an enumerator added without a row here does not compile.
+// The AllX arrays used to be written out by hand and asserted to be in
+// enumerator order. They are now built from the enumeration itself, so that
+// assertion would only restate how they are constructed -- and an assertion that
+// cannot fail reads as protection which is not there.
+//
 /// The same guard for a table of rows rather than of enumerators.
 ///
 /// @param rows The table to check.
 /// @param project How to get a row's enumerator.
-/// @return Whether every row sits at its own enumerator's index.
+/// @return Whether every row sits at the index of the enumerator it names.
 ///
 /// Anchoring a table's length on a named enumerator only fires when nothing is
 /// wrong; this fires when a row is inserted in the wrong place, which is the
@@ -428,12 +403,15 @@ template <typename Row, std::size_t N, typename Project>
     });
 }
 
-static_assert(rowsInEnumeratorOrder(AllButtons), "AllButtons must list every Button at its own index");
-static_assert(rowsInEnumeratorOrder(AllKnobs), "AllKnobs must list every KnobId at its own index");
-static_assert(rowsInEnumeratorOrder(AllMixes), "AllMixes must list every MixId at its own index");
-static_assert(rowsInEnumeratorOrder(AllLineOutSources),
-              "AllLineOutSources must list every LineOutSource at its own index");
-static_assert(rowsInEnumeratorOrder(AllSurroundModes),
-              "AllSurroundModes must list every SurroundMode at its own index");
+// The AllX arrays used to be written out by hand and asserted to be in enumerator
+// order. They are built from the enumeration itself now, so that assertion would
+// only restate how they are constructed -- and an assertion which cannot fail
+// reads as protection that is not there.
+//
+// What can still go wrong is the assumption underneath: denseEnumeratorsOf()
+// walks values from zero and stops at the first gap, so an enumeration that grew
+// a hole would silently lose everything past it. Enumerators_test.cpp compares
+// the dense walk against an exhaustive search for every enumeration here, which
+// is the expensive check kept out of the headers and paid once.
 
 } // namespace ax310

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Enumerators.hpp"
 #include "IConsole.hpp"
 
 #include <algorithm>
@@ -23,13 +24,11 @@ enum class LogLevel : std::uint8_t
     Debug = 0,
     Info = 1,
     Warning = 2,
-    Error = 3,
-
-    Last = Error
+    Error = 3
 };
 
 /// Number of log levels, derived from the enumeration rather than stated.
-inline constexpr std::size_t LogLevelCount = static_cast<std::size_t>(LogLevel::Last) + 1;
+inline constexpr std::size_t LogLevelCount = enumerators::denseEnumeratorCount<LogLevel>();
 
 /// Display text for each LogLevel, indexed by the enumerator.
 inline constexpr std::array<std::string_view, LogLevelCount> LogLevelNames {

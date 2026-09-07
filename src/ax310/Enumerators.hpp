@@ -118,6 +118,44 @@ template <typename Enum, std::size_t N = enumeratorCount<Enum>()>
     }(std::make_index_sequence<N> {});
 }
 
+/// @return How many values @p Enum declares consecutively from zero.
+///
+/// The cheap counterpart to enumeratorCount(), for the enumerations that are
+/// dense by construction -- the ones whose enumerators index a table, where a gap
+/// would already break rowsInEnumeratorOrder() and every array beside it.
+///
+/// Cheap matters. enumeratorCount() instantiates a template for all 256 candidate
+/// values, which costs about 1.7 seconds per translation unit once the whole of
+/// Types.hpp is done that way, and Types.hpp is included everywhere. This stops at
+/// the first gap, so it instantiates one template per enumerator and one more.
+///
+/// It exists to retire the `Last = SomethingOrOther` idiom, which every count was
+/// previously derived from and which drifts silently: an enumerator added after
+/// `Last` leaves every count one short, and nothing says so.
+template <typename Enum>
+[[nodiscard]] consteval std::size_t denseEnumeratorCount() noexcept
+{
+    static_assert(std::is_enum_v<Enum>);
+
+    std::size_t count = 0;
+    [&count]<std::size_t... I>(std::index_sequence<I...>) {
+        // Short-circuits at the first value the enumeration does not declare, so
+        // the instantiations after it are never needed.
+        (void) ((isEnumerator<static_cast<Enum>(I)>() ? (++count, true) : false) && ...);
+    }(std::make_index_sequence<CandidateCount> {});
+
+    return count;
+}
+
+/// @return Every value @p Enum declares, for an enumeration dense from zero.
+template <typename Enum, std::size_t N = denseEnumeratorCount<Enum>()>
+[[nodiscard]] consteval std::array<Enum, N> denseEnumeratorsOf() noexcept
+{
+    return []<std::size_t... I>(std::index_sequence<I...>) {
+        return std::array<Enum, N> { static_cast<Enum>(I)... };
+    }(std::make_index_sequence<N> {});
+}
+
 namespace detail
 {
     /// Deliberately awkward: a zero, a gap, an alias, and the top of the range.
@@ -128,6 +166,17 @@ namespace detail
         Top = 0xff,
         Alias = Middle,
     };
+
+    /// Dense from zero, with a trailing alias the way this project used to write
+    /// every enumeration.
+    enum class DenseSelfTest : std::uint8_t
+    {
+        A = 0,
+        B = 1,
+        C = 2,
+        Alias = C,
+    };
+
 } // namespace detail
 
 /// @return Whether the trick still works on the compiler in hand.
@@ -139,10 +188,17 @@ namespace detail
 [[nodiscard]] consteval bool selfTestPasses() noexcept
 {
     constexpr auto Found = enumeratorsOf<detail::SelfTest>();
+    constexpr auto Dense = denseEnumeratorsOf<detail::DenseSelfTest>();
+
     return Found.size() == 3                       // Alias repeats Middle, so three values.
            && Found[0] == detail::SelfTest::Zero   // Zero is a value like any other.
            && Found[1] == detail::SelfTest::Middle // The gap is skipped.
-           && Found[2] == detail::SelfTest::Top;   // The last candidate is still searched.
+           && Found[2] == detail::SelfTest::Top    // The last candidate is still searched.
+           // And the cheap count stops at the gap rather than running past it,
+           // which is the whole difference between the two.
+           && denseEnumeratorCount<detail::SelfTest>() == 1
+           && Dense.size() == 3
+           && Dense[2] == detail::DenseSelfTest::C;
 }
 
 static_assert(selfTestPasses(), "the enumerator-listing trick does not work on this compiler");

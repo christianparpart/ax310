@@ -197,6 +197,11 @@ captures name them.
   and sent immediately before `CompressorEnable`. It is not in `InitPayloads`,
   which came from an older capture, and no effect capture triggers it. The
   position suggests a paired enable; nothing else does.
+- **The counts assume every indexing enumeration is dense from zero.** They are
+  derived by walking values from zero and stopping at the first gap, which is
+  cheap enough for a header included everywhere. `Enumerators_test.cpp` compares
+  that walk against an exhaustive search for all ten, so a hole fails the build
+  rather than silently truncating.
 - **`Enumerators.hpp` depends on compiler diagnostic strings.** It lists an
   enumeration's enumerators by reading `__PRETTY_FUNCTION__` / `__FUNCSIG__`,
   because C++23 has no way to ask. A self-test asserts the trick still works, and

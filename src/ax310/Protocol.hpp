@@ -358,7 +358,9 @@ inline constexpr std::array<std::uint8_t, ButtonCount> ButtonColourSelectors {
     0x3f, // BottomLeft
     0x3e, // BottomRight
 };
-static_assert(rowsInEnumeratorOrder(AllButtons));
+// ButtonColourSelectors is indexed by Button and its length is tied to
+// ButtonCount, so a missing row will not compile. Nothing can check the order:
+// the selectors are opaque bytes, and only the hardware knows which is which.
 
 /// @param button Which button.
 /// @return The selector byte its colour record carries.
@@ -455,7 +457,8 @@ inline constexpr std::array<std::uint8_t, SurroundModeCount> SurroundModeSelecto
     0x30, // BlinkingRgb
     0x24, // ScrollingRgb
 };
-static_assert(rowsInEnumeratorOrder(AllSurroundModes));
+// As with the button selectors: the length is tied to the enumeration, and the
+// order is a claim about hardware that no assertion can settle.
 
 /// @param mode Which mode.
 /// @return The selector byte its record carries.
@@ -1100,13 +1103,11 @@ enum class EffectId : std::uint8_t
     Compressor = 1,
     Equaliser = 2,
     Reverb = 3,
-    Echo = 4,
-
-    Last = Echo
+    Echo = 4
 };
 
 /// Number of effects, derived from the enumeration rather than stated.
-inline constexpr std::size_t EffectCount = static_cast<std::size_t>(EffectId::Last) + 1;
+inline constexpr std::size_t EffectCount = enumerators::denseEnumeratorCount<EffectId>();
 
 /// What each effect is called, indexed by the enumerator.
 inline constexpr std::array<std::string_view, EffectCount> EffectNames {
@@ -1135,13 +1136,11 @@ enum class Parameter : std::uint8_t
     ReverbDiffusion = 3,
     ReverbRoomSize = 4,
     CompressorThreshold = 5,
-    CompressorRatio = 6,
-
-    Last = CompressorRatio
+    CompressorRatio = 6
 };
 
 /// Number of parameters, derived from the enumeration rather than stated.
-inline constexpr std::size_t ParameterCount = static_cast<std::size_t>(Parameter::Last) + 1;
+inline constexpr std::size_t ParameterCount = enumerators::denseEnumeratorCount<Parameter>();
 
 /// @param parameter The parameter to index.
 /// @return Its zero-based position, for indexing a per-parameter table.

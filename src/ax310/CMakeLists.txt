@@ -35,6 +35,7 @@ target_compile_features(ax310 PUBLIC cxx_std_23)
 # list from -- only walks that tree.
 if(AX310_BUILD_TESTS)
     add_executable(ax310_test
+        Enumerators_test.cpp
         Device_test.cpp
         Fakes_test.cpp
         IConsole_test.cpp
