@@ -555,9 +555,52 @@ enum class Property : std::uint8_t
     /// either the name is too narrow or this address carries two things.
     KnobLedSelect = 0x21,
 
-    /// Init writes 0x01 here; writing 0x00 lights every ring. What it means
-    /// beyond that is unknown.
-    KnobLedModeAt14 = 0x14,
+    /// What the Line Out socket carries: see LineOutSource.
+    ///
+    /// Captured from the vendor's Audio Output pane, cycling the dropdown through
+    /// all three entries and back to the first, which reproduced the first value
+    /// exactly. Init writes `0x01` -- the audience mix -- which is one more piece
+    /// of somebody's settings rather than anything a deck needs to start.
+    ///
+    /// It was called `KnobLedModeAt14` on the strength of one hardware poke:
+    /// writing `0x00` was seen to light every ring. That observation is not
+    /// retracted, but it is not what this address is for, and nothing has since
+    /// reproduced it. A line-out source of "creator mix" plausibly changes what
+    /// the rings display; it is at any rate the less likely of the two readings
+    /// to be the register's purpose, given a dropdown that writes exactly these
+    /// three values.
+    LineOutSource = 0x14,
+
+    /// Microphone input configuration, as a bitfield.
+    ///
+    /// Four captures pin two bits and leave two set in all of them:
+    ///
+    ///   | bit  | meaning |
+    ///   | 0    | phantom power: XLR sends `0x0e`, XLR + 48V sends `0x0f` |
+    ///   | 3    | the chat mic takes the microphone **without** effects |
+    ///   | 1, 2 | set in every capture; unknown |
+    ///
+    /// XLR and 6.3 mm are indistinguishable here -- both send `0x0e` -- so the
+    /// deck senses the connector rather than being told about it.
+    ///
+    /// Bit 3's polarity reads backwards until it is named for what it does: the
+    /// vendor's "Mic with effects" clears it and "Mic without effects" sets it,
+    /// so it is a bypass rather than an enable.
+    MicConfiguration = 0x20,
+
+    /// Headphone output volume, `0x00` to `0x14`.
+    ///
+    /// The same 21 steps the mixer levels use. Captured by dragging the vendor's
+    /// headphone slider to each end. Init reads this address twice and writes
+    /// `0x11` to it, which is 17 of 20.
+    HeadphoneVolume = 0x3c,
+
+    /// Line Out volume, `0x00` to `0x14`, laid out exactly like HeadphoneVolume.
+    ///
+    /// Nothing to do with the button-colour selector that shares this number: a
+    /// selector is a byte *inside* a record written to `0xc0`, and this is an
+    /// address in the property space.
+    LineOutVolume = 0x3d,
 
     /// Base of the **audience mix's** six per-track levels, laid out exactly like
     /// CreatorMixLevels: `base + track`, same knob order. This is the mix the
@@ -1142,11 +1185,12 @@ struct WireName
 /// Names for the property addresses that have one.
 inline constexpr auto PropertyNames = std::to_array<WireName>({
     { .value = 0x0f, .name = "DisplayPower" },
-    { .value = 0x14, .name = "KnobLedModeAt14" },
+    { .value = 0x14, .name = "LineOutSource (00 creator, 01 audience, 02 chat mic)" },
     { .value = 0x15, .name = "SelectedMix (00 creator, 01 audience)" },
     { .value = 0x1d, .name = "SettingsTransaction (01 begin, 00 end)" },
     { .value = 0x1e, .name = "KnobLedBrightness" },
     { .value = 0x1f, .name = "MicGain" },
+    { .value = 0x20, .name = "MicConfiguration (bit 0 phantom, bit 3 effects bypass)" },
     { .value = 0x21, .name = "KnobLedSelect / mixer mode" },
     { .value = 0x27, .name = "creator mix levels (base; +track)" },
     { .value = 0x2a, .name = "creator System level" },
@@ -1155,6 +1199,8 @@ inline constexpr auto PropertyNames = std::to_array<WireName>({
     { .value = 0x31, .name = "audience System level" },
     { .value = 0x2e, .name = "audience mix levels (base; +track)" },
     { .value = 0x35, .name = "KnobPropertyAt35" },
+    { .value = 0x3c, .name = "HeadphoneVolume" },
+    { .value = 0x3d, .name = "LineOutVolume" },
 });
 
 /// Names for the framed commands that have one.

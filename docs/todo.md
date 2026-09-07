@@ -192,7 +192,12 @@ captures name them.
   meaning. `0x10` (properties) and `0x0a` (the display) are the only two
   understood. Whatever wakes the hardware is most likely among them, since
   everything else in the init sequence is now accounted for as either
-  interrogation or settings.
+  interrogation or settings. The vendor's Audio Output pane was swept looking for
+  them and every control there landed in the property space instead, so they are
+  not reachable from that pane.
+- **`0x20` bits 1 and 2** are set in every capture and nothing is known to clear
+  them. Two mic settings are accounted for; whatever these are is not in any pane
+  that has been swept.
 - **Byte 4 in solid mode does something, and we do not know what.** The vendor
   never varies it usefully — `0xfb` for all ten colour presets and at both ends of
   the brightness slider — but driving it by hand produces colour effects on the

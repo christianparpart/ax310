@@ -154,6 +154,45 @@ inline constexpr std::array<std::string_view, MixCount> MixNames { "Creator", "A
 /// Every MixId, in enumerator order, for iterating without an index loop.
 inline constexpr std::array<MixId, MixCount> AllMixes { MixId::Creator, MixId::Audience };
 
+/// What the deck's Line Out socket carries.
+///
+/// A third option beyond the two mixes, which is why this is its own enumeration
+/// rather than a MixId: the socket can be fed the chat microphone directly,
+/// bypassing both mixes.
+enum class LineOutSource : std::uint8_t
+{
+    CreatorMix = 0,
+    AudienceMix = 1,
+    ChatMic = 2,
+
+    Last = ChatMic
+};
+
+/// Number of line-out sources, derived from the enumeration rather than stated.
+inline constexpr std::size_t LineOutSourceCount =
+    static_cast<std::size_t>(LineOutSource::Last) + 1;
+
+/// What each source is called, indexed by the enumerator.
+inline constexpr std::array<std::string_view, LineOutSourceCount> LineOutSourceNames {
+    "Creator Mix",
+    "Audience Mix",
+    "Chat Mic",
+};
+
+/// Every LineOutSource, in enumerator order.
+inline constexpr std::array<LineOutSource, LineOutSourceCount> AllLineOutSources {
+    LineOutSource::CreatorMix,
+    LineOutSource::AudienceMix,
+    LineOutSource::ChatMic,
+};
+
+/// @param source The source to name.
+/// @return Its display label.
+[[nodiscard]] constexpr std::string_view nameOf(LineOutSource source) noexcept
+{
+    return LineOutSourceNames[static_cast<std::size_t>(source)];
+}
+
 /// @param mix The mix to name.
 /// @return Its display label.
 [[nodiscard]] constexpr std::string_view nameOf(MixId mix) noexcept
@@ -331,6 +370,13 @@ inline constexpr std::array<std::string_view, DeviceErrorCount> DeviceErrorTexts
     return static_cast<std::size_t>(mix);
 }
 
+/// @param source The line-out source to index.
+/// @return Its zero-based position, for indexing a per-source table.
+[[nodiscard]] constexpr std::size_t indexOf(LineOutSource source) noexcept
+{
+    return static_cast<std::size_t>(source);
+}
+
 /// @param mode The mode to index.
 /// @return The mode's zero-based position, for indexing a per-mode table.
 [[nodiscard]] constexpr std::size_t indexOf(DeviceMode mode) noexcept
@@ -385,6 +431,8 @@ template <typename Row, std::size_t N, typename Project>
 static_assert(rowsInEnumeratorOrder(AllButtons), "AllButtons must list every Button at its own index");
 static_assert(rowsInEnumeratorOrder(AllKnobs), "AllKnobs must list every KnobId at its own index");
 static_assert(rowsInEnumeratorOrder(AllMixes), "AllMixes must list every MixId at its own index");
+static_assert(rowsInEnumeratorOrder(AllLineOutSources),
+              "AllLineOutSources must list every LineOutSource at its own index");
 static_assert(rowsInEnumeratorOrder(AllSurroundModes),
               "AllSurroundModes must list every SurroundMode at its own index");
 

@@ -93,7 +93,8 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
     // A read of the display group, the same probe shape as group 0x01.
     protocol::commandAt(protocol::CommandKind::Get, 0x0a, 0x00, {}, 0),
 
-    // Microphone type. Bit 0 is phantom power, so 0x0e leaves it off.
+    // Microphone configuration. Bit 0 is phantom power, so 0x0e leaves it off;
+    // bit 3 is set, which routes the chat mic without effects.
     protocol::setPropertyAt(0x20, std::uint8_t { 0x0e }),
 
     // Group 0xa0, read with length 1. Neither group nor address is understood.
@@ -222,6 +223,9 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
     // **Here the sequence stops configuring and starts imposing.** Everything
     // below is one person's mixer state, captured once. 0x0a is 50%, which is why
     // replaying this was seen to move every knob to half on a live call.
+    //
+    // The two writes to 0x14 set the Line Out source to the audience mix. They are
+    // identical and consecutive, so one of them does nothing.
     protocol::setPropertyAt(0x14, std::uint8_t { 0x01 }),
     protocol::setPropertyAt(0x14, std::uint8_t { 0x01 }),
     protocol::setPropertyAt(0x21, std::uint8_t { 0x80 }),
@@ -265,10 +269,10 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
         protocol::SurroundAddress,
         protocol::surroundRecord(SurroundMode::ScrollingRgb, 0x06, 0xff, 0xff, 0xff)),
 
-    // 0x3c and 0x3d again, this time written. They were read at payloads 4 and 5
-    // and are read again at 65 and 66, so the software cares about them; as
-    // property addresses they are unrelated to the button selectors that share
-    // those numbers in a colour record.
+    // Headphone volume, twice, then Line Out volume: 0x11 of 0x14, so 85%. The
+    // vendor reads both at payloads 4 and 5 and reads them again at 65 and 66.
+    // Nothing to do with the button selectors that share these numbers -- those
+    // are bytes inside a record written to 0xc0, these are property addresses.
     protocol::setPropertyAt(0x3c, std::uint8_t { 0x11 }),
     protocol::setPropertyAt(0x3c, std::uint8_t { 0x11 }),
     protocol::setPropertyAt(0x3d, std::uint8_t { 0x11 }),

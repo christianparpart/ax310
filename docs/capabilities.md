@@ -154,6 +154,11 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Panel off | `01 0a ff` | ✅ captured and implemented; the deck wakes itself, with no host command |
 | RGB lighting control | `0xc0`, bank-selected: buttons and knob rings | ✅ each button takes a full RGB; the rings take one colour for the selected mix, and the record carries no mix. Driven on hardware |
 | Surround light strip | `0xe0` | ✅ six modes with a colour and a rate, off being a black solid. Driven on hardware |
+| Headphone volume | `0x3c` | ✅ 0..20, the same 21 steps the mixer uses |
+| Line Out volume | `0x3d` | ✅ 0..20 |
+| Line Out source | `0x14` | ✅ creator mix, audience mix, or the chat mic |
+| Chat mic effects bypass | `0x20` bit 3 | ✅ captured from the vendor's dropdown |
+| Audio mixer sample rate | — | ✅ standard USB Audio Class, not this protocol; ALSA and PipeWire already set it |
 | Per-track volume | `0x27` and `0x2e` | ✅ two contiguous six-byte blocks, one per mix, `base + track`; all twelve read and written |
 | Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |
 | Single ↔ Dual Mix | `0x21` (`0x80` single / `0x00` dual), `0x22` | ◐ captured, **not driven** — `0x21` also selects which rings light and which it is doing is unsettled |
