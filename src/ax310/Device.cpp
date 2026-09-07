@@ -870,6 +870,15 @@ void Device::lightButtonsWithDefaults()
 
 std::expected<void, DeviceError> Device::sendScreen(std::span<std::uint8_t const> frame)
 {
+    // One frame at a time, for the whole frame. The chunks carry a sequence the
+    // deck reassembles into one image and a marker saying which one ends it, so
+    // two frames sent at once arrive as a single frame made of both -- and what
+    // the panel then shows is a blend of two moments, or the older one kept
+    // because the newer never completed. Held around the per-chunk lock below
+    // rather than instead of it: that one also excludes the property writes, and
+    // holding it for a whole frame would make a knob turn wait on the screen.
+    std::lock_guard<std::mutex> const frameLock { _screenMutex };
+
     std::uint8_t sequence = 0;
 
     // The deck needs to be told which chunk ends the frame, so the count has to

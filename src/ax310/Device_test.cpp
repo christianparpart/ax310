@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <numeric>
 #include <span>
+#include <thread>
 #include <vector>
 
 using namespace ax310;
@@ -1753,6 +1754,54 @@ TEST_CASE("each mix gets its own ring colour and ring selector", "[device][mix]"
 
     CHECK(protocol::KnobLedSelectForMix[indexOf(MixId::Creator)]
           != protocol::KnobLedSelectForMix[indexOf(MixId::Audience)]);
+}
+
+TEST_CASE("two frames sent at once do not interleave on the wire", "[device][screen]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // The deck reassembles a frame from its chunks, so a chunk of one frame
+    // arriving between two of another gives it a single image made of both --
+    // and the panel then shows a blend of two moments, or keeps the older one
+    // because the newer never completed its sequence. The application pushes
+    // frames from a thread pool, so two of them meeting here is not exotic.
+    constexpr std::size_t FrameBytes = protocol::ScreenChunkPayloadSize * 4;
+    std::vector<std::uint8_t> const first(FrameBytes, 0xa1);
+    std::vector<std::uint8_t> const second(FrameBytes, 0xb2);
+
+    std::vector<std::thread> senders;
+    senders.reserve(2);
+    for (auto const* frame: { &first, &second })
+        senders.emplace_back([&harness, frame] {
+            for (int round = 0; round < 20; ++round)
+                if (auto const sent = harness.device.sendScreen(*frame); !sent)
+                    return;
+        });
+
+    for (auto& sender: senders)
+        sender.join();
+
+    // Every frame is four chunks of one filler byte. Walking what was sent, the
+    // filler may only change where a sequence starts over.
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() == std::size_t { 40 } * 4);
+
+    std::uint8_t current = 0;
+    for (std::size_t index = 0; index < sent.size(); ++index)
+    {
+        auto const& bytes = sent[index].bytes;
+        REQUIRE(bytes.size() == protocol::ScreenChunkSize);
+
+        auto const sequence = bytes[protocol::ScreenChunkSequenceOffset];
+        auto const filler = bytes[protocol::ScreenChunkHeaderSize];
+
+        INFO("chunk " << index << " of the run, sequence " << int { sequence });
+        if (sequence == 0)
+            current = filler;
+        else
+            CHECK(filler == current);
+    }
 }
 
 TEST_CASE("a dangerous address is refused before anything is sent", "[device][safety]")

@@ -440,6 +440,10 @@ class Device
     /// Empty until one has. Guarded by _paceMutex.
     std::optional<std::chrono::steady_clock::time_point> _lastLevelWrite;
 
+    /// Keeps one screen frame's chunks together. Ordered before _writeMutex,
+    /// which sendScreen still takes per chunk.
+    std::mutex _screenMutex;
+
     /// Serialises writes: the host may push a frame from one thread while
     /// another drives poll().
     std::mutex _writeMutex;

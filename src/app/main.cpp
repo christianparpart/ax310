@@ -299,9 +299,22 @@ int main(int argc, char* argv[])
     noteRenderer(&view);
 
     // Grab the window and push it to the deck's screen.
+    //
+    // One frame in flight at a time. Encoding and sending take longer than the
+    // interval whenever the machine is busy, and starting a second frame anyway
+    // put two of them on the bus at once: the deck reassembles chunks into one
+    // image, so it received a frame made of two, and a switch that should have
+    // repainted the panel left it showing the colour it had. Dropping the grab
+    // is the right answer for a live view -- the frame it would have carried is
+    // already out of date by the time the previous one lands.
+    auto const busy = std::make_shared<std::atomic<bool>>(false);
+
     QTimer renderTimer;
-    QObject::connect(&renderTimer, &QTimer::timeout, [&view, bridge = device.get()]() {
+    QObject::connect(&renderTimer, &QTimer::timeout, [&view, busy, bridge = device.get()]() {
         if (!bridge->isConnected())
+            return;
+
+        if (busy->exchange(true))
             return;
 
         // The whole window rather than its root item. QQuickItem::grabToImage()
@@ -316,9 +329,12 @@ int main(int argc, char* argv[])
         // multiplies by the same ratio.
         QImage const frame = view.grabWindow();
         if (frame.isNull())
+        {
+            busy->store(false);
             return;
+        }
 
-        QThreadPool::globalInstance()->start([bridge, frame]() {
+        QThreadPool::globalInstance()->start([bridge, frame, busy]() {
             // Resized here rather than at the grab, because the grab's idea of
             // the size is the display's and the deck's is fixed.
             auto scaled = frame;
@@ -335,6 +351,7 @@ int main(int argc, char* argv[])
             buffer.open(QIODevice::WriteOnly);
             scaled.save(&buffer, "JPG", FrameQuality);
             bridge->sendFrame(scaled.width(), scaled.height(), jpegData);
+            busy->store(false);
         });
     });
     // Capped in the driver rather than here, so no stored value and no hand-edited

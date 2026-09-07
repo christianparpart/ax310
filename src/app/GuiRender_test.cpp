@@ -265,6 +265,83 @@ TEST_CASE("the panel is drawn in the colour of the mix being edited", "[gui][ren
     CHECK(audienceOrange > audienceBlue * 3);
 }
 
+TEST_CASE("the deck's panel recolours when the mix changes", "[gui][render][mix]")
+{
+    RenderHarness harness;
+    harness.connectWithLevels({ 15, 8, 14, 20, 18, 13 }, { 6, 16, 4, 11, 9, 20 });
+
+    // One view, created and never mapped, grabbed again and again. That is what
+    // the application does with the deck's panel, and what nothing else here
+    // does: every other case builds a fresh view per grab, which cannot see
+    // anything that only goes wrong the second time through the same scene
+    // graph -- and the panel going out in the old mix's colours while the
+    // desktop's preview of it was right is exactly that shape of defect.
+    // The desktop window is up too, and it carries its own live ScreenUI as the
+    // panel preview -- so two of them are drawing from one bridge, which is the
+    // arrangement the application actually runs and the one the report
+    // distinguishes: the preview was right and the panel was not.
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("ax310Device", &harness.bridge);
+    engine.load(QUrl("qrc:/qt/qml/AX310/App/gui/Main.qml"));
+    REQUIRE_FALSE(engine.rootObjects().isEmpty());
+    auto* const desktop = qobject_cast<QQuickWindow*>(engine.rootObjects().front());
+    REQUIRE(desktop != nullptr);
+    desktop->show();
+
+    QQuickView view;
+    view.setResizeMode(QQuickView::SizeRootObjectToView);
+    view.rootContext()->setContextProperty("ax310Device", &harness.bridge);
+    view.resize(PanelWidth, PanelHeight);
+    view.setSource(QUrl("qrc:/qt/qml/AX310/App/gui/ScreenUI.qml"));
+
+    for (auto const& error: view.errors())
+        UNSCOPED_INFO("QML: " << error.toString().toStdString());
+
+    REQUIRE(view.status() == QQuickView::Ready);
+    view.create();
+
+    auto const hueOf = [](MixId mix) {
+        auto const& colour = protocol::MixRingColours[indexOf(mix)];
+        return QColor(colour.red, colour.green, colour.blue).hue();
+    };
+
+    // Grabbed on a timer throughout, the way the application feeds the deck --
+    // including while the cross-fade is running, which a single grab after the
+    // event loop has settled never sees.
+    QImage latest;
+    QTimer grabber;
+    grabber.setInterval(33);
+    QObject::connect(&grabber, &QTimer::timeout, [&view, &latest] {
+        auto const frame = view.grabWindow();
+        if (!frame.isNull())
+            latest = frame;
+    });
+    grabber.start();
+
+    RenderHarness::settle();
+    REQUIRE_FALSE(latest.isNull());
+    CHECK(pixelsNearHue(latest, hueOf(MixId::Creator)) > pixelsNearHue(latest, hueOf(MixId::Audience)));
+
+    // Back and forth, because one switch landing correctly says nothing about a
+    // colour that lags by one.
+    for (int round = 0; round < 3; ++round)
+    {
+        for (auto const mix: { MixId::Audience, MixId::Creator })
+        {
+            harness.bridge.selectMix(static_cast<int>(indexOf(mix)));
+            RenderHarness::settle();
+
+            auto const wanted = pixelsNearHue(latest, hueOf(mix));
+            auto const other =
+                pixelsNearHue(latest, hueOf(mix == MixId::Creator ? MixId::Audience : MixId::Creator));
+
+            INFO("round " << round << ", the " << nameOf(mix) << " mix");
+            UNSCOPED_INFO(wanted << " of its own hue against " << other << " of the other's");
+            CHECK(wanted > other);
+        }
+    }
+}
+
 TEST_CASE("the mix that is not being edited is drawn in its own colour", "[gui][render][mix]")
 {
     RenderHarness harness;
