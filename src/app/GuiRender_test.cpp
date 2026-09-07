@@ -301,8 +301,13 @@ TEST_CASE("the panel is drawn in the colour of the mix being edited", "[gui][ren
     UNSCOPED_INFO("creator: " << creatorBlue << " blue, " << creatorOrange << " orange");
     UNSCOPED_INFO("audience: " << audienceBlue << " blue, " << audienceOrange << " orange");
 
-    CHECK(creatorBlue > creatorOrange);
-    CHECK(audienceOrange > audienceBlue);
+    // A margin rather than a bare comparison. The other mix is on the screen too,
+    // in its own colour and by design, so "more blue than orange" would still
+    // hold if its arc grew to rival the one it sits beside. Three to one is what
+    // a thin reference ring against a thick one looks like; it does not pin how
+    // bright that ring is, which no pixel count measures.
+    CHECK(creatorBlue > creatorOrange * 3);
+    CHECK(audienceOrange > audienceBlue * 3);
 }
 
 TEST_CASE("the mix that is not being edited is drawn in its own colour", "[gui][render][mix]")

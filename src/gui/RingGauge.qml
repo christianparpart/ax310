@@ -106,7 +106,11 @@ Item {
                 }
             }
             ShapePath {
-                strokeColor: Qt.alpha(gauge.otherAccent, 0.55)
+                // Dim enough to stay a reference rather than a second reading:
+                // at full strength a warm hue on near-black out-shouts the arc
+                // beside it, and which mix you are in stops being legible from
+                // across a desk -- which is the one thing this screen has to say.
+                strokeColor: Qt.alpha(gauge.otherAccent, 0.32)
                 strokeWidth: 2.5 * gauge._unit
                 fillColor: "transparent"
                 capStyle: ShapePath.FlatCap
