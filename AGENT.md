@@ -9,6 +9,12 @@ of it we have — the target list this effort is working through.
 
 `docs/todo.md` is the internal todo list, ordered by what unblocks the most.
 
+**Read `AGENT.local.md` first if it exists.** It is not in git, and it says what
+is true of the machine you are on rather than of the project: which hardware is
+attached and how, how the desktop is set up, and what the local toolchain does
+that would otherwise mislead. Nothing in it belongs here, and nothing here
+belongs in it.
+
 **Read `.agent/rules/` before doing hardware work.** It holds the established
 protocol facts, how to capture and decode a single action, what must never be
 written to the deck, and the mistakes already made here. It exists so none of that
