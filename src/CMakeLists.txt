@@ -168,6 +168,45 @@ if(AX310_BUILD_TESTS)
                  COMMAND "${CMAKE_COMMAND}" -E env python3
                          "${PROJECT_SOURCE_DIR}/scripts/check-comment-history.py")
 
+        # Answering --help must cost nothing and touch nothing.
+        #
+        # Qt's QCommandLineParser::process() prints the help and calls ::exit(),
+        # which never runs ~QGuiApplication -- and so never releases the platform
+        # theme the desktop environment loaded during construction. That turns the
+        # most harmless command the program has into a LeakSanitizer report. Under
+        # a sanitised preset this fails if process() comes back; elsewhere it still
+        # checks that --help answers with no display attached.
+        #
+        # The second half of the regex is about the deck rather than the leak: a
+        # question asked on the command line must not open the hardware, and the
+        # driver announces it by name when it does. That half can only fire on a
+        # machine with a deck attached, which is exactly where it matters.
+        #
+        # It is the exit code that carries the verdict, so this deliberately does
+        # not set PASS_REGULAR_EXPRESSION: that property makes CTest ignore the
+        # return code, which is the one thing here worth reading.
+        add_test(NAME "asking for help is not a leak" COMMAND ax310_app --help)
+        set_tests_properties("asking for help is not a leak" PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            FAIL_REGULAR_EXPRESSION "Sanitizer;Opened AX310")
+
+        # A command line this program will not run has to say so.
+        #
+        # Qt's parser collects anything that is not an option as a positional
+        # argument and reports nothing at all about it, so without the check this
+        # guards, `ax310_app garbage` opens the deck and starts a session without
+        # a word -- a misspelt option reaching the hardware. Both halves are
+        # checked here: the message, and the
+        # refusal. If the check regresses the binary starts the interface instead
+        # and never returns, which the timeout scores as the failure it is.
+        add_test(NAME "an argument that is not an option is refused, out loud"
+                 COMMAND ax310_app garbage)
+        set_tests_properties("an argument that is not an option is refused, out loud" PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 30
+            PASS_REGULAR_EXPRESSION "error: Unexpected argument 'garbage'."
+            FAIL_REGULAR_EXPRESSION "Sanitizer;Opened AX310")
+
         # A second run of the same binary, against the real scene graph.
         #
         # Everything above pins the software renderer, which is what lets it run

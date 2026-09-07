@@ -98,6 +98,17 @@ Presets: `clang-debug`, `gcc-release`, `clang-asan-ubsan`, `clang-tsan`,
 ./out/build/clang-debug/src/ax310_app --verbose
 ```
 
+`--start-minimised` opens it into the taskbar rather than onto the desktop, for
+when it is being run alongside something else. Ctrl+C stops it the same way
+closing the window does, so the deck gets its shutdown sequence and the settings
+the handshake overwrote are put back.
+
+Under a sanitised preset the exit leak check is skipped when the interface drew
+through the GPU: the graphics driver leaks about 25 kB on this desktop with no
+frame of ours in any trace, and the same session under `QT_QUICK_BACKEND=software`
+reports nothing at all. That is where the check still applies, along with every
+test binary.
+
 **Attaching is not entirely side-effect-free.** Connecting replays a captured
 sequence that turns out to be somebody's saved configuration rather than an
 initialisation. Property registers are snapshotted and restored, but the DSP chain
