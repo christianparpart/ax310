@@ -21,7 +21,9 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
 #include <QQuickWindow>
@@ -32,6 +34,7 @@
 
 #include <cstdlib>
 #include <map>
+#include <memory>
 #include <vector>
 
 using namespace ax310;
@@ -277,8 +280,12 @@ TEST_CASE("the panel is drawn in the colour of the mix being edited", "[gui][ren
     // audience mix, and the interface says the same thing. This is the design's
     // central claim, so it is the one worth pinning: switching the mix must
     // visibly repaint the screen, not merely change a label.
-    auto const creatorHue = QColor(0x2F, 0xA8, 0xFF).hue();
-    auto const audienceHue = QColor(0xFF, 0x91, 0x30).hue();
+    auto const hueOf = [](MixId mix) {
+        auto const& colour = protocol::MixRingColours[indexOf(mix)];
+        return QColor(colour.red, colour.green, colour.blue).hue();
+    };
+    auto const creatorHue = hueOf(MixId::Creator);
+    auto const audienceHue = hueOf(MixId::Audience);
 
     auto const creator = harness.renderPanel();
     auto const creatorBlue = pixelsNearHue(creator, creatorHue);
@@ -296,6 +303,39 @@ TEST_CASE("the panel is drawn in the colour of the mix being edited", "[gui][ren
 
     CHECK(creatorBlue > creatorOrange);
     CHECK(audienceOrange > audienceBlue);
+}
+
+TEST_CASE("the interface and the deck's rings agree on the mix colours", "[gui][mix]")
+{
+    // Two palettes for one piece of state is how they came to disagree: a mix
+    // switch lit the rings the deck's blue while the panel showed a different
+    // one. The driver's table is the source, and this is what keeps the QML from
+    // drifting away from it again.
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import AX310.App
+        QtObject {
+            property color creator: Theme.creator
+            property color audience: Theme.audience
+        }
+    )",
+                      QUrl("qrc:/mix-colours.qml"));
+
+    INFO(component.errorString().toStdString());
+    REQUIRE(component.isReady());
+
+    std::unique_ptr<QObject> const values { component.create() };
+    REQUIRE(values != nullptr);
+
+    auto const wanted = [](MixId mix) {
+        auto const& colour = protocol::MixRingColours[indexOf(mix)];
+        return QColor(colour.red, colour.green, colour.blue);
+    };
+
+    CHECK(values->property("creator").value<QColor>() == wanted(MixId::Creator));
+    CHECK(values->property("audience").value<QColor>() == wanted(MixId::Audience));
 }
 
 TEST_CASE("a track's level reaches the ring that shows it", "[gui][render][level]")

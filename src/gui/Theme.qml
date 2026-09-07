@@ -23,8 +23,13 @@ QtObject {
     readonly property color rule:     "#262C30"   // dividers, and the unlit part of a ring
     readonly property color ink:      "#E6EAEC"
     readonly property color inkDim:   "#7E888E"
-    readonly property color creator:  "#2FA8FF"
-    readonly property color audience: "#FF9130"
+    // The deck's own ring values, so the screen and the hardware say the same
+    // thing in the same blue and the same orange. protocol::MixRingColours holds
+    // them for the driver, and a test asserts these two agree with it -- they
+    // disagreed once, and a mix switch then lit the rings one colour while the
+    // panel showed another.
+    readonly property color creator:  "#007DFF"
+    readonly property color audience: "#FF7D00"
     readonly property color clip:     "#FF4D5A"   // peak only, never decoration
 
     /// @param mix An ax310::MixId, as an int.

@@ -446,11 +446,29 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
     std::array<std::uint8_t, 1> const open { 0x01 };
     std::array<std::uint8_t, 1> const chosen { static_cast<std::uint8_t>(indexOf(mix)) };
     std::array<std::uint8_t, 1> const close { 0x00 };
+    std::array<std::uint8_t, 1> const rings { protocol::KnobLedSelectForMix[indexOf(mix)] };
 
     auto const fence = static_cast<std::uint8_t>(protocol::Property::SettingsTransaction);
     auto const selector = static_cast<std::uint8_t>(protocol::Property::SelectedMix);
+    auto const ringSelect = static_cast<std::uint8_t>(protocol::Property::KnobLedSelect);
+
+    // SelectedMix alone moves the audio and leaves the knob rings behind, showing
+    // the mix that was on before with the colour it had. Two other writes are what
+    // move them, and the vendor sends all three inside one fence:
+    //
+    //   * the ring colour, because the record carries no mix -- the deck applies
+    //     it to whichever mix is selected, so the new mix's colour has to be said;
+    //   * KnobLedSelect, which is what decides the levels the rings display.
+    //
+    // The order is the vendor's, colour first and the switch last. That the colour
+    // written before the switch ends up on the mix being switched *to* is what the
+    // fence is presumably for.
+    auto const& colour = protocol::MixRingColours[indexOf(mix)];
+    auto const record = protocol::knobColourRecord(colour.red, colour.green, colour.blue);
 
     return writeProperty(fence, open)
+        .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
+        .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
         .and_then([&] { return writeProperty(fence, close); });
 }

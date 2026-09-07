@@ -1431,14 +1431,44 @@ TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]
     REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
 
     // The vendor brackets a mode change and leaves a level drag unbracketed;
-    // this follows that, so the deck sees the shape it expects.
-    REQUIRE(harness.transport.sent().size() == 3);
-    CHECK(harness.transport.sent()[0].bytes[3] == 0x1d);
-    CHECK(harness.transport.sent()[0].bytes[5] == 0x01);
-    CHECK(harness.transport.sent()[1].bytes[3] == 0x15);
-    CHECK(harness.transport.sent()[1].bytes[5] == 0x01);
-    CHECK(harness.transport.sent()[2].bytes[3] == 0x1d);
-    CHECK(harness.transport.sent()[2].bytes[5] == 0x00);
+    // this follows that, so the deck sees the shape it expects. Inside the fence
+    // go the three writes a switch is made of, in the vendor's order.
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() == 5);
+
+    CHECK(sent[0].bytes[3] == 0x1d);
+    CHECK(sent[0].bytes[5] == 0x01);
+
+    // The ring colour, because the record carries no mix: without this the rings
+    // keep the colour of the mix that was on before.
+    CHECK(sent[1].bytes[3] == protocol::ButtonColourAddress);
+    CHECK(sent[1].bytes[5] == protocol::KnobBank);
+    CHECK(sent[1].bytes[8] == protocol::MixRingColours[indexOf(MixId::Audience)].red);
+    CHECK(sent[1].bytes[9] == protocol::MixRingColours[indexOf(MixId::Audience)].green);
+    CHECK(sent[1].bytes[10] == protocol::MixRingColours[indexOf(MixId::Audience)].blue);
+
+    // KnobLedSelect, which is what moves the levels the rings display.
+    CHECK(sent[2].bytes[3] == static_cast<std::uint8_t>(protocol::Property::KnobLedSelect));
+    CHECK(sent[2].bytes[5] == protocol::KnobLedSelectForMix[indexOf(MixId::Audience)]);
+
+    CHECK(sent[3].bytes[3] == 0x15);
+    CHECK(sent[3].bytes[5] == 0x01);
+    CHECK(sent[4].bytes[3] == 0x1d);
+    CHECK(sent[4].bytes[5] == 0x00);
+}
+
+TEST_CASE("each mix gets its own ring colour and ring selector", "[device][mix]")
+{
+    // The two mixes must not send the same bytes for the parts that say which
+    // mix it is, or a switch would be invisible on the deck however well the
+    // audio followed -- which is exactly the shape of the defect this fixes.
+    auto const creator = protocol::MixRingColours[indexOf(MixId::Creator)];
+    auto const audience = protocol::MixRingColours[indexOf(MixId::Audience)];
+    CHECK((creator.red != audience.red || creator.green != audience.green
+           || creator.blue != audience.blue));
+
+    CHECK(protocol::KnobLedSelectForMix[indexOf(MixId::Creator)]
+          != protocol::KnobLedSelectForMix[indexOf(MixId::Audience)]);
 }
 
 TEST_CASE("a dangerous address is refused before anything is sent", "[device][safety]")

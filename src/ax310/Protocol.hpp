@@ -479,6 +479,32 @@ inline constexpr std::uint8_t KnobLightCount = 0x0a;
              0xf8,     0x00,           ButtonLit,      0x80 };
 }
 
+/// What the knob rings are lit with in each mix, indexed by MixId.
+///
+/// The rings are how the deck itself says which mix is live: blue for the creator
+/// mix, orange for the audience mix. Both values are the vendor's, and they are
+/// where the interface's own creator and audience colours come from -- so the
+/// window and the hardware say the same thing in the same language.
+///
+/// These have to be written on every switch. The ring record carries no mix at
+/// all, so the deck colours whichever mix is selected, and a switch that does not
+/// write the new mix's colour leaves the rings showing the old one's.
+inline constexpr std::array<LightColour, MixCount> MixRingColours {
+    LightColour { .red = 0x00, .green = 0x7d, .blue = 0xff }, // Creator, blue
+    LightColour { .red = 0xff, .green = 0x7d, .blue = 0x00 }, // Audience, orange
+};
+
+/// What Property::KnobLedSelect carries for each mix, indexed by MixId.
+///
+/// Captured from three of the vendor's actions, which together read this address
+/// as carrying the mixer mode and the monitored mix in one byte: `0x80` a single
+/// creator mix, `0x01` a single audience mix, `0x00` Dual Mix. The init sequence
+/// writes `0x80`, which is why a freshly attached deck monitors the creator mix.
+///
+/// Writing SelectedMix alone moves the audio and leaves the rings behind; this is
+/// the half that moves them.
+inline constexpr std::array<std::uint8_t, MixCount> KnobLedSelectForMix { 0x80, 0x01 };
+
 /// Where the surround light strip is configured.
 ///
 /// The second record address, and the last one that was unaccounted for. Nothing
@@ -711,14 +737,19 @@ enum class Property : std::uint8_t
     /// The deck's own meters cannot show this because they are pre-fader.
     CreatorMixLevels = 0x27,
 
-    /// Which knobs light at all. Init writes 0x80; writing 0x10 leaves only the
-    /// first knob's ring lit, so it selects rather than scales. The encoding is
-    /// not worked out -- a six-knob mask would not be 0x80.
+    /// Which knobs light at all, and which mix their rings display. Init writes
+    /// 0x80; writing 0x10 leaves only the first knob's ring lit, so it selects
+    /// rather than scales. The encoding is not worked out -- a six-knob mask would
+    /// not be 0x80.
     ///
-    /// It also tracks the mixer mode, which the ring-selection reading does not
-    /// explain: the vendor software writes 0x80 for Single Mix, 0x00 for Dual Mix
-    /// and 0x01 when switching to the audience mix, always alongside 0x22. So
-    /// either the name is too narrow or this address carries two things.
+    /// The name is too narrow, and the second meaning is the load-bearing one. The
+    /// vendor writes 0x80 for a single creator mix, 0x01 for a single audience
+    /// mix, and 0x00 for Dual Mix, always alongside 0x22. Confirmed on the
+    /// hardware: writing 0x80 or 0x01 here is what moves the levels the rings
+    /// display, and SelectedMix on its own does not. See KnobLedSelectForMix.
+    ///
+    /// 0x22 is written by the vendor beside it and its meaning is unrecorded. This
+    /// driver does not write it, and the rings follow the mix without it.
     KnobLedSelect = 0x21,
 
     /// What the Line Out socket carries: see LineOutSource.
@@ -800,8 +831,14 @@ enum class Property : std::uint8_t
     ///
     /// Switching creator to audience writes `0x01` here, and the init sequence
     /// writes `0x00` -- so a deck this driver attaches to is left monitoring the
-    /// creator mix. Only that one direction has been captured; the write for
-    /// audience back to creator is inferred, not seen.
+    /// creator mix. Only that one direction was captured; the write for audience
+    /// back to creator is inferred, and both directions are confirmed on the
+    /// hardware through Device::selectMix.
+    ///
+    /// **This address alone moves the audio and nothing else.** The knob rings
+    /// keep the colour and the levels of the mix that was on before, which looks
+    /// exactly like a switch that did not happen. KnobLedSelect and a ring-colour
+    /// record are the other two thirds of a switch; see MixRingColours.
     SelectedMix = 0x15,
 
     // The per-track levels live in two contiguous six-byte blocks, one per mix,
