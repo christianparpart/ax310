@@ -68,47 +68,52 @@ namespace ax310::commands
 /// every command this driver sends is zero-padded and the hardware takes them,
 /// including the colour records that were driven by hand.
 inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
-    // Interrogation. Nothing here changes the deck; the vendor software is
-    // reading what it is attached to before it decides what to send. Group 0x01
-    // with a zero address and zero length reads as a probe rather than a value.
-    protocol::commandAt(protocol::CommandKind::Get, 0x01, 0x00, {}, 0),
-
-    // Commit, which the sequence uses to end a burst of reads.
+    // **Identify yourself.** The very first thing the vendor sends, and what
+    // comes back is the firmware version -- which is how the group was decoded,
+    // by holding the reply against the string Creator Central was displaying.
+    protocol::identityRequest(),
     protocol::framedPayload(protocol::FramedCommand::Commit),
 
-    // The eight registers the software wants to know before it writes anything.
-    protocol::getPropertyAt(0x1e, 1),
-    protocol::getPropertyAt(0x20, 1),
-    protocol::getPropertyAt(0x3d, 1),
-    protocol::getPropertyAt(0x3c, 1),
-    protocol::getPropertyAt(0x22, 1),
-    protocol::getPropertyAt(0x21, 1),
-    protocol::getPropertyAt(0x27, 7),
-    protocol::getPropertyAt(0x2e, 7),
-    protocol::getPropertyAt(0x35, 7),
-    protocol::getPropertyAt(0x11, 1),
-    protocol::getPropertyAt(0x12, 1),
-    protocol::getPropertyAt(0x13, 1),
+    // Then it reads its way across the deck before writing anything. A capture
+    // of the vendor starting up recorded the answers; they are noted here beside
+    // each read, from one deck configured one way, as a sanity check on shape
+    // rather than as values anybody should expect.
+    protocol::getProperty(protocol::Property::KnobLedBrightness, 1), // 0x09
+    protocol::getProperty(protocol::Property::MicConfiguration, 1),  // 0x06
+    protocol::getProperty(protocol::Property::LineOutVolume, 1),     // 0x14, maximum
+    protocol::getProperty(protocol::Property::HeadphoneVolume, 1),   // 0x14, maximum
+    protocol::getPropertyAt(0x22, 1),                                // 0x02, meaning unknown
+    protocol::getProperty(protocol::Property::KnobLedSelect, 1),     // 0x00
+    protocol::getProperty(protocol::Property::CreatorMixLevels, 7),  // six levels, then a zero
+    protocol::getProperty(protocol::Property::AudienceMixLevels, 7),
+    protocol::getProperty(protocol::Property::KnobPropertyAt35, 7),  // answers one value, not six
 
-    // A read of the display group, the same probe shape as group 0x01.
-    protocol::commandAt(protocol::CommandKind::Get, 0x0a, 0x00, {}, 0),
+    // Read one byte at a time, and 0x11 is later written with three. They are
+    // most likely one three-byte quantity that the vendor reads a byte at a time.
+    protocol::getPropertyAt(0x11, 1), // 0x01
+    protocol::getPropertyAt(0x12, 1), // 0x08
+    protocol::getPropertyAt(0x13, 1), // 0x01
+
+    // The display group, which answers with the panel's brightness in the address
+    // slot -- `81 0a 64`, while the vendor was showing 100%.
+    protocol::displayRequest(),
 
     // Microphone configuration. Bit 0 is phantom power, so 0x0e leaves it off;
     // bit 3 is set, which routes the chat mic without effects.
-    protocol::setPropertyAt(0x20, std::uint8_t { 0x0e }),
+    protocol::setProperty(protocol::Property::MicConfiguration, std::uint8_t { 0x0e }),
 
-    // Group 0xa0, read with length 1. Neither group nor address is understood.
-    protocol::commandAt(protocol::CommandKind::Get, 0xa0, 0x00, {}, 1),
+    // The serial number, thirteen ASCII digits.
+    protocol::serialRequest(),
 
-    // Another probe-and-commit pair, identical to payloads 0 and 1.
-    protocol::commandAt(protocol::CommandKind::Get, 0x01, 0x00, {}, 0),
+    // The firmware read and its commit again, unchanged.
+    protocol::identityRequest(),
     protocol::framedPayload(protocol::FramedCommand::Commit),
 
     // 0x23, whose two known values have no effect anyone has observed.
     protocol::setPropertyAt(0x23, std::uint8_t { 0x00 }),
 
     // Microphone gain, 0x1a of a 0x00..0x38 range.
-    protocol::setPropertyAt(0x1f, std::uint8_t { 0x1a }),
+    protocol::setProperty(protocol::Property::MicGain, std::uint8_t { 0x1a }),
 
     // The delay effect: disable, configure, enable, configure again. The order
     // is the tell -- this is a settings restore, not a hardware bring-up, and
@@ -211,9 +216,14 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
                                 0xc4, 0x82, 0x44, 0x64, 0x62, 0x41, 0x22, 0x93,
                                 0x7b, 0x06, 0x36, 0xfb, 0x0d, 0xff, 0x12 })),
 
-    // Three writes in three groups nobody has identified.
+    // A write in group 0x09, which nobody has identified. Together with 0x03 and
+    // 0x04 it is one of the three writes left in either sequence that are neither
+    // interrogation nor somebody's settings.
     protocol::commandAt(protocol::CommandKind::Set, 0x09, 0x02, {}, 0),
-    protocol::commandAt(protocol::CommandKind::Set, 0xa0, 0x00, {}, 4),
+
+    // A *write* to the serial group, four zero bytes. Reading it gives the serial
+    // number; what writing it does is unknown and this driver does not try.
+    protocol::commandAt(protocol::CommandKind::Set, protocol::SerialGroup, 0x00, {}, 4),
 
     // The display group, which is where the panel's brightness lives. 0xaa is
     // outside the 25..100 the brightness slider produces and is not the 0xff that
@@ -226,15 +236,17 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
     //
     // The two writes to 0x14 set the Line Out source to the audience mix. They are
     // identical and consecutive, so one of them does nothing.
-    protocol::setPropertyAt(0x14, std::uint8_t { 0x01 }),
-    protocol::setPropertyAt(0x14, std::uint8_t { 0x01 }),
-    protocol::setPropertyAt(0x21, std::uint8_t { 0x80 }),
+    protocol::setProperty(protocol::Property::LineOutSource,
+                          static_cast<std::uint8_t>(LineOutSource::AudienceMix)),
+    protocol::setProperty(protocol::Property::LineOutSource,
+                          static_cast<std::uint8_t>(LineOutSource::AudienceMix)),
+    protocol::setProperty(protocol::Property::KnobLedSelect, std::uint8_t { 0x80 }),
     protocol::setPropertyAt(0x22, std::uint8_t { 0x12 }),
-    protocol::setPropertyAt(0x27, std::uint8_t { 0x0a }),
-    protocol::setPropertyAt(0x35, std::uint8_t { 0x0a }),
-    protocol::setPropertyAt(0x27,
-                            std::to_array<std::uint8_t>({
-                                0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x00 })),
+    protocol::setProperty(protocol::Property::CreatorMixLevels, std::uint8_t { 0x0a }),
+    protocol::setProperty(protocol::Property::KnobPropertyAt35, std::uint8_t { 0x0a }),
+    protocol::setProperty(protocol::Property::CreatorMixLevels,
+                          std::to_array<std::uint8_t>({
+                              0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x00 })),
 
     // 0x11 written with three zero bytes, after being read at payload 11.
     protocol::setPropertyAt(0x11,
@@ -242,15 +254,16 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
                                 0x00, 0x00, 0x00 })),
 
     // Select the creator mix.
-    protocol::setPropertyAt(0x15, std::uint8_t { 0x00 }),
+    protocol::setProperty(protocol::Property::SelectedMix,
+                          static_cast<std::uint8_t>(MixId::Creator)),
 
     // A write in group 0x03, then the probe-and-commit pair a third time.
     protocol::commandAt(protocol::CommandKind::Set, 0x03, 0x01, {}, 0),
-    protocol::commandAt(protocol::CommandKind::Get, 0x01, 0x00, {}, 0),
+    protocol::identityRequest(),
     protocol::framedPayload(protocol::FramedCommand::Commit),
 
     // The knob rings: brightness, then colour.
-    protocol::setPropertyAt(0x1e, std::uint8_t { 0x0d }),
+    protocol::setProperty(protocol::Property::KnobLedBrightness, std::uint8_t { 0x0d }),
 
     // Bytes 6 and 7 are 0xf9 0x00 here where the later captures have 0xf8 0x00,
     // which is one more reason to treat that pair as carrying nothing. That is
@@ -273,9 +286,9 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
     // vendor reads both at payloads 4 and 5 and reads them again at 65 and 66.
     // Nothing to do with the button selectors that share these numbers -- those
     // are bytes inside a record written to 0xc0, these are property addresses.
-    protocol::setPropertyAt(0x3c, std::uint8_t { 0x11 }),
-    protocol::setPropertyAt(0x3c, std::uint8_t { 0x11 }),
-    protocol::setPropertyAt(0x3d, std::uint8_t { 0x11 }),
+    protocol::setProperty(protocol::Property::HeadphoneVolume, std::uint8_t { 0x11 }),
+    protocol::setProperty(protocol::Property::HeadphoneVolume, std::uint8_t { 0x11 }),
+    protocol::setProperty(protocol::Property::LineOutVolume, std::uint8_t { 0x11 }),
 
     // The four function buttons, first all to a warm white, then to somebody's
     // chosen scheme: red, blue, blue, red. Raw for the same reason as payload 58 --
@@ -285,8 +298,8 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
                             std::to_array<std::uint8_t>({
                                 0x00, 0x3c, 0x01, 0xff, 0xf4, 0xec, 0x00, 0x3d,
                                 0x1f, 0x80 })),
-    protocol::getPropertyAt(0x3c, 1),
-    protocol::getPropertyAt(0x3d, 1),
+    protocol::getProperty(protocol::Property::HeadphoneVolume, 1),
+    protocol::getProperty(protocol::Property::LineOutVolume, 1),
     protocol::setPropertyAt(protocol::ButtonColourAddress,
                             std::to_array<std::uint8_t>({
                                 0x00, 0x3d, 0x01, 0xff, 0xf4, 0xec, 0x00, 0x3b,
@@ -328,7 +341,7 @@ inline constexpr std::array<protocol::Payload, 14> ShutdownPayloads { {
     // sequence brackets the light-extinguishing with them.
     protocol::commandAt(protocol::CommandKind::Set, 0x04, 0x01, {}, 0),
     protocol::commandAt(protocol::CommandKind::Set, 0x09, 0x02, std::to_array<std::uint8_t>({ 0x00 })),
-    protocol::setPropertyAt(0x0f, std::uint8_t { 0x02 }),
+    protocol::setProperty(protocol::Property::DisplayPower, std::uint8_t { 0x02 }),
 
     // The four function buttons, unlit. Byte 8 is 0x00 where a lit record has
     // 0x1f, and the colour left behind is blue -- so this darkens them rather
@@ -349,7 +362,7 @@ inline constexpr std::array<protocol::Payload, 14> ShutdownPayloads { {
                                 0x00, 0x3e, 0x01, 0x00, 0x00, 0xff, 0xfe, 0x00, 0x00, 0x80 })),
 
     // The knob rings: dimmed, then darkened the same way.
-    protocol::setPropertyAt(0x1e, std::uint8_t { 0x09 }),
+    protocol::setProperty(protocol::Property::KnobLedBrightness, std::uint8_t { 0x09 }),
     protocol::setPropertyAt(protocol::ButtonColourAddress,
                             std::to_array<std::uint8_t>({
                                 0x01, 0xc0, 0x0a, 0x00, 0x00, 0xff, 0xfe, 0x00, 0x00, 0x80 })),
@@ -365,7 +378,7 @@ inline constexpr std::array<protocol::Payload, 14> ShutdownPayloads { {
     // And the opening three again, unchanged.
     protocol::commandAt(protocol::CommandKind::Set, 0x04, 0x01, {}, 0),
     protocol::commandAt(protocol::CommandKind::Set, 0x09, 0x02, std::to_array<std::uint8_t>({ 0x00 })),
-    protocol::setPropertyAt(0x0f, std::uint8_t { 0x02 }),
+    protocol::setProperty(protocol::Property::DisplayPower, std::uint8_t { 0x02 }),
 } };
 
 } // namespace ax310::commands

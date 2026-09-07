@@ -149,18 +149,19 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
     }
 }
 
-/// Reads one of the identity groups, which answer differently from a property.
+/// Sends one prepared request and collects the answer.
+///
+/// The identity groups answer in a shape of their own, so this does not go
+/// through readRegister(), which checks that a property reply echoes its address.
 ///
 /// @param transport An open control interface.
-/// @param group Which group to read.
+/// @param request The request to send, from Protocol.hpp.
 /// @param reply Where to put the answer.
 /// @return Whether an answer came back.
-[[nodiscard]] bool readGroup(HidApiTransport& transport, std::uint8_t group,
-                             protocol::FeatureReport& reply)
+[[nodiscard]] bool ask(HidApiTransport& transport, protocol::Payload const& request,
+                       protocol::FeatureReport& reply)
 {
-    auto const request = protocol::frameFeatureReport(
-        protocol::commandAt(protocol::CommandKind::Get, group, 0x00, {}, group == protocol::SerialGroup ? 1 : 0));
-    if (!transport.sendFeatureReport(request))
+    if (!transport.sendFeatureReport(protocol::frameFeatureReport(request)))
         return false;
 
     return transport.getFeatureReport(reply).has_value();
@@ -177,7 +178,7 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
 int runIdentify(HidApiTransport& transport, IConsole& console)
 {
     protocol::FeatureReport reply {};
-    if (!readGroup(transport, protocol::IdentityGroup, reply))
+    if (!ask(transport, protocol::identityRequest(), reply))
     {
         writeErrorLine(console, "the deck did not answer the identity read");
         return EXIT_FAILURE;
@@ -208,7 +209,7 @@ int runIdentify(HidApiTransport& transport, IConsole& console)
               version->codeB);
 
     protocol::FeatureReport serialReply {};
-    if (!readGroup(transport, protocol::SerialGroup, serialReply))
+    if (!ask(transport, protocol::serialRequest(), serialReply))
     {
         writeErrorLine(console, "the deck did not answer the serial read");
         return EXIT_FAILURE;

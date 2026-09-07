@@ -286,6 +286,24 @@ struct FirmwareVersion
     return payload;
 }
 
+/// @return The command that asks the deck for its firmware version.
+///
+/// Address and length are both zero: this group's reply is a fixed block and the
+/// request carries nothing to select within it.
+[[nodiscard]] constexpr Payload identityRequest() noexcept
+{
+    return commandAt(CommandKind::Get, IdentityGroup, 0x00, {}, 0);
+}
+
+/// @return The command that asks the deck for its serial number.
+///
+/// Length one, which is what the vendor asks for and is not the length of the
+/// answer -- thirteen digits come back regardless.
+[[nodiscard]] constexpr Payload serialRequest() noexcept
+{
+    return commandAt(CommandKind::Get, SerialGroup, 0x00, {}, 1);
+}
+
 /// The four function buttons' colour, written one button at a time to `0xc0`.
 ///
 /// Ten bytes, captured across fourteen records of the vendor software:
@@ -580,6 +598,16 @@ inline constexpr int MaxPanelBrightness = 100;
 /// The value that turns the panel off, which is not a brightness.
 inline constexpr std::uint8_t PanelOffLevel = 0xff;
 
+/// @return The command that asks the display group for its current state.
+///
+/// The answer puts the panel's brightness back in the *address* slot, which is
+/// the same place a write puts it -- captured answering `0x64` while the vendor
+/// was showing 100%.
+[[nodiscard]] constexpr Payload displayRequest() noexcept
+{
+    return commandAt(CommandKind::Get, DisplayGroup, 0x00, {}, 0);
+}
+
 /// Builds a display command.
 /// @param level A percentage, or PanelOffLevel.
 /// @return The payload to frame and send.
@@ -807,6 +835,14 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 [[nodiscard]] constexpr Payload setProperty(Property property, std::span<std::uint8_t const> values) noexcept
 {
     return setPropertyAt(static_cast<std::uint8_t>(property), values);
+}
+
+/// @param property The property to write.
+/// @param value Its new value, when that is a single byte -- which most are.
+/// @return The full 64-byte payload.
+[[nodiscard]] constexpr Payload setProperty(Property property, std::uint8_t value) noexcept
+{
+    return setPropertyAt(static_cast<std::uint8_t>(property), value);
 }
 
 /// @param property The property to read.
