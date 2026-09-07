@@ -129,9 +129,9 @@ template <typename Enum, std::size_t N = enumeratorCount<Enum>()>
 /// Types.hpp is done that way, and Types.hpp is included everywhere. This stops at
 /// the first gap, so it instantiates one template per enumerator and one more.
 ///
-/// It exists to retire the `Last = SomethingOrOther` idiom, which every count was
-/// previously derived from and which drifts silently: an enumerator added after
-/// `Last` leaves every count one short, and nothing says so.
+/// Deriving a count this way rather than from a trailing `Last` enumerator means
+/// an enumerator added anywhere is counted; a `Last` has to be moved by hand, and
+/// leaves every count one short when it is not.
 template <typename Enum>
 [[nodiscard]] consteval std::size_t denseEnumeratorCount() noexcept
 {
@@ -167,8 +167,8 @@ namespace detail
         Alias = Middle,
     };
 
-    /// Dense from zero, with a trailing alias the way this project used to write
-    /// every enumeration.
+    /// Dense from zero, with a trailing alias, so the cheap walk is exercised on
+    /// the shape the counts actually run against.
     enum class DenseSelfTest : std::uint8_t
     {
         A = 0,

@@ -656,8 +656,7 @@ enum class Property : std::uint8_t
     /// headphones, and muting the same track in AudienceMixLevels does not. The
     /// creator mix is the one the streamer hears.
     ///
-    /// The knob LED rings display this block, which is why it was called
-    /// CreatorMixLevels for a long time. The rings show whichever mix the deck is
+    /// The knob LED rings display this block. They show whichever mix the deck is
     /// monitoring, and SelectedMix says which that is.
     ///
     /// Read or written with length 7 it carries all six at once, in the deck's
@@ -688,13 +687,12 @@ enum class Property : std::uint8_t
     /// exactly. Init writes `0x01` -- the audience mix -- which is one more piece
     /// of somebody's settings rather than anything a deck needs to start.
     ///
-    /// It was called `KnobLedModeAt14` on the strength of one hardware poke:
-    /// writing `0x00` was seen to light every ring. That observation is not
-    /// retracted, but it is not what this address is for, and nothing has since
-    /// reproduced it. A line-out source of "creator mix" plausibly changes what
-    /// the rings display; it is at any rate the less likely of the two readings
-    /// to be the register's purpose, given a dropdown that writes exactly these
-    /// three values.
+    /// One hardware observation sits oddly beside this and is kept rather than
+    /// explained away: writing `0x00` here was once seen to light every ring.
+    /// Nothing has reproduced it since. A line-out source of "creator mix"
+    /// plausibly changes what the rings display, and against a dropdown that
+    /// writes exactly these three values it is the weaker of the two readings --
+    /// but it was observed, so it is written down.
     LineOutSource = 0x14,
 
     /// Microphone input configuration, as a bitfield.

@@ -380,11 +380,6 @@ template <typename Enum, std::size_t N>
                                [&rows](std::size_t index) { return indexOf(rows[index]) == index; });
 }
 
-// The AllX arrays used to be written out by hand and asserted to be in
-// enumerator order. They are now built from the enumeration itself, so that
-// assertion would only restate how they are constructed -- and an assertion that
-// cannot fail reads as protection which is not there.
-//
 /// The same guard for a table of rows rather than of enumerators.
 ///
 /// @param rows The table to check.
@@ -403,15 +398,10 @@ template <typename Row, std::size_t N, typename Project>
     });
 }
 
-// The AllX arrays used to be written out by hand and asserted to be in enumerator
-// order. They are built from the enumeration itself now, so that assertion would
-// only restate how they are constructed -- and an assertion which cannot fail
-// reads as protection that is not there.
-//
-// What can still go wrong is the assumption underneath: denseEnumeratorsOf()
-// walks values from zero and stops at the first gap, so an enumeration that grew
-// a hole would silently lose everything past it. Enumerators_test.cpp compares
-// the dense walk against an exhaustive search for every enumeration here, which
-// is the expensive check kept out of the headers and paid once.
+// Every enumeration above is dense from zero, and the counts and AllX arrays are
+// built on that: denseEnumeratorsOf() walks values from zero and stops at the
+// first gap, so a hole would lose everything past it. Enumerators_test.cpp
+// compares that walk against an exhaustive search, which is too slow for a header
+// this widely included and cheap enough to pay once in a test.
 
 } // namespace ax310
