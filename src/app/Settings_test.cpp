@@ -4,6 +4,7 @@
 #include <app/Settings.hpp>
 #include <ax310/Protocol.hpp>
 
+#include <QFile>
 #include <QSettings>
 #include <QTemporaryDir>
 
@@ -113,8 +114,8 @@ TEST_CASE("a parameter this build does not know is left where it lies", "[settin
     // the wrong parameter.
     {
         QSettings store { fixture.path, QSettings::IniFormat };
-        store.setValue("effects/parameter/99", 7);
-        store.setValue(QStringLiteral("effects/parameter/%1")
+        store.setValue("effects/parameter_99", 7);
+        store.setValue(QStringLiteral("effects/parameter_%1")
                            .arg(std::to_underlying(protocol::Parameter::ReverbDamp)),
                        33);
     }
@@ -124,4 +125,57 @@ TEST_CASE("a parameter this build does not know is left where it lies", "[settin
     CHECK(std::ranges::count_if(state.parameters,
                                 [](auto const& chosen) { return chosen.has_value(); })
           == 1);
+}
+
+TEST_CASE("the keys written to the file are plain ASCII", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    {
+        EffectState wanted;
+        wanted.enabled.front() = true;
+        wanted.parameters[protocol::indexOf(protocol::Parameter::ReverbDamp)] = 33;
+        app::Settings { fixture.path }.setEffects(wanted);
+    }
+
+    QFile file { fixture.path };
+    REQUIRE(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    auto const contents = QString::fromUtf8(file.readAll());
+
+    // An INI section holds one group level. Ask QSettings for two and it writes
+    // the second as a backslash inside the key -- `enabled\\85` -- which no other
+    // INI parser reads back and which nobody can hand-edit with confidence.
+    INFO(contents.toStdString());
+    CHECK_FALSE(contents.contains(QLatin1Char('\\')));
+    CHECK_FALSE(contents.contains(QLatin1Char('%')));
+
+    for (auto const character: contents)
+        CHECK(character.unicode() < 128);
+}
+
+TEST_CASE("an effects chain stored under the folded keys still reads", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    // A file on disk carries the two-level spelling, and a rename that silently
+    // switched every effect off and dropped every chosen parameter would be a
+    // worse defect than the one it fixed.
+    {
+        QSettings store { fixture.path, QSettings::IniFormat };
+        store.setValue(QStringLiteral("effects/enabled/%1")
+                           .arg(std::to_underlying(protocol::EffectEnables.front()),
+                                2,
+                                16,
+                                QLatin1Char('0')),
+                       true);
+        store.setValue(QStringLiteral("effects/parameter/%1")
+                           .arg(std::to_underlying(protocol::Parameter::ReverbDamp)),
+                       33);
+    }
+
+    auto const state = app::Settings { fixture.path }.effects();
+    CHECK(state.enabled.front());
+    CHECK(state.parameters[protocol::indexOf(protocol::Parameter::ReverbDamp)] == 33);
 }

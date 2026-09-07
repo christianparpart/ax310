@@ -4,6 +4,7 @@
 #include <ax310/Protocol.hpp>
 
 #include <QSettings>
+#include <QVariant>
 #include <QVariantList>
 
 #include <memory>
@@ -34,9 +35,26 @@ namespace
     ///
     /// The number rather than the name, so renaming an enumerator in this project
     /// does not silently orphan somebody's stored setting.
+    ///
+    /// One group level and an underscore, not two group levels: an INI file has a
+    /// single level of section, and QSettings spells the second one as a literal
+    /// backslash inside the key. That is neither ASCII nor something another INI
+    /// parser reads back, and `\8` looks like an escape to anyone editing it.
     [[nodiscard]] QString enabledKey(protocol::FramedCommand command)
     {
-        return QStringLiteral("effects/enabled/%1").arg(std::to_underlying(command), 2, 16, QLatin1Char('0'));
+        return QStringLiteral("effects/enabled_%1")
+            .arg(std::to_underlying(command), 2, 16, QLatin1Char('0'));
+    }
+
+    /// @param command One of protocol::EffectEnables.
+    /// @return The key a file carrying the two-level spelling holds it under.
+    ///
+    /// Read, never written, so a stored effects chain survives the rename rather
+    /// than silently reverting to off.
+    [[nodiscard]] QString foldedEnabledKey(protocol::FramedCommand command)
+    {
+        return QStringLiteral("effects/enabled/%1")
+            .arg(std::to_underlying(command), 2, 16, QLatin1Char('0'));
     }
 
     /// @param parameter Which parameter.
@@ -49,7 +67,26 @@ namespace
     /// configuration nobody asked for.
     [[nodiscard]] QString parameterKey(protocol::Parameter parameter)
     {
+        return QStringLiteral("effects/parameter_%1").arg(std::to_underlying(parameter));
+    }
+
+    /// @param parameter Which parameter.
+    /// @return The key a file carrying the two-level spelling holds it under.
+    [[nodiscard]] QString foldedParameterKey(protocol::Parameter parameter)
+    {
         return QStringLiteral("effects/parameter/%1").arg(std::to_underlying(parameter));
+    }
+
+    /// @param store Where to look.
+    /// @param key The key this build writes.
+    /// @param folded The key a file written under the two-level spelling holds.
+    /// @return Whichever of the two the store has, preferring @p key.
+    [[nodiscard]] QVariant storedValue(QSettings const& store, QString const& key, QString const& folded)
+    {
+        if (store.contains(key))
+            return store.value(key);
+
+        return store.contains(folded) ? store.value(folded) : QVariant {};
     }
 
     constexpr auto PanelFpsKey = "panel/framesPerSecond";
@@ -65,7 +102,11 @@ EffectState Settings::effects() const
 
     EffectState state;
     for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
-        state.enabled[index] = store->value(enabledKey(protocol::EffectEnables[index]), false).toBool();
+    {
+        auto const command = protocol::EffectEnables[index];
+        auto const value = storedValue(*store, enabledKey(command), foldedEnabledKey(command));
+        state.enabled[index] = value.toBool();
+    }
 
     // Read one at a time, so a key this build does not know is skipped and a key
     // it knows that nobody has written stays unset. A parameter nobody chose must
@@ -74,9 +115,10 @@ EffectState Settings::effects() const
     // configuration on the deck.
     for (auto const& info: protocol::Parameters)
     {
-        auto const key = parameterKey(info.id);
-        if (store->contains(key))
-            state.parameters[protocol::indexOf(info.id)] = store->value(key).toInt();
+        auto const value =
+            storedValue(*store, parameterKey(info.id), foldedParameterKey(info.id));
+        if (value.isValid())
+            state.parameters[protocol::indexOf(info.id)] = value.toInt();
     }
 
     return state;
