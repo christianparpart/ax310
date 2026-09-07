@@ -156,8 +156,8 @@ TEST_CASE("a deck that will not take its initialisation is not reported as conne
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == DeviceError::WriteFailed);
 
-    // Reporting Connected here is what the driver used to do, and it left the
-    // app polling a deck that was never woken: dark screen, no reports, no error.
+    // Reporting Connected here would leave the app polling a deck nothing woke:
+    // dark screen, no reports, and no error to explain either.
     CHECK(harness.device.connectionState() != ConnectionState::Connected);
     CHECK(harness.listener.count<ConnectionChanged>() == 0);
 }

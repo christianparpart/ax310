@@ -416,10 +416,11 @@ TEST_CASE("the spec's tables have no phantom rows", "[protocol][spec]")
     {
         UNSCOPED_INFO("command " << static_cast<int>(row.value));
 
-        // This guarded against a phantom all-zero row, which a table declared
-        // with a length longer than its initialiser list used to leave behind.
-        // std::to_array removed that possibility and the enumerated value type
-        // removed the rest: a row can only carry a command the enum defines.
+        // A guard against a phantom all-zero row, which is what a table declared
+        // with a length longer than its initialiser list leaves behind.
+        // std::to_array and the enumerated value type both rule that out here --
+        // a row can only carry a command the enum defines -- so this holds the
+        // property rather than catching a defect anything can currently produce.
         CHECK(std::to_underlying(row.value) != 0x00);
         CHECK_FALSE(row.name.empty());
 

@@ -31,10 +31,13 @@ PATTERNS = [
     r"\ban earlier version\b",
     r"\ban earlier reading\b",
     r"\ban earlier entry\b",
-    r"\bused to be\b",
+    # Every occurrence of this in the project was a comment narrating the code's
+    # own past, and not one was the ordinary "employed to" sense -- so the whole
+    # phrase can be refused rather than only "used to be". It is what would have
+    # caught "the handshake used to replay a captured microphone chain".
+    r"\bused to\b",
     r"\bit was called\b",
     r"\bwas once named\b",
-    r"\bwe used to\b",
     r"\bis no longer written\b",
     r"\bfor a long time\b",
     r"\bhistorical note\b",

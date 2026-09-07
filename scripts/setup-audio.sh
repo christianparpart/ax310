@@ -110,10 +110,10 @@ if [[ "${1:-}" == "--identify" ]]; then
     # Plays a tone into each split sink in turn and reads the deck's own meters to
     # see which track it landed on. No ears involved.
     #
-    # This used to play the tone and ask which knob answered, because the meters
-    # were misread at the time as a single stereo mix. They are one per track: a
-    # tone in a sink lights exactly its own meter, which is what makes the whole
-    # question measurable. What the meters still cannot do is confirm a level
+    # No question is put to anybody, because the meters answer it: they are one
+    # per track, so a tone in a sink lights exactly its own meter. Reading them as
+    # a single stereo mix is what makes this look like it needs ears. What the
+    # meters cannot do is confirm a level
     # register -- they are pre-fader and read the same at 0% as at 100%.
     #
     # The tone must go through the split sinks, not straight at the device. A

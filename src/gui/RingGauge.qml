@@ -60,12 +60,11 @@ Item {
 
     // Scale from the width alone.
     //
-    // This used to subtract the legend's measured height from the gauge's own
-    // height, which made the legend an input to the scale that sets the legend's
-    // pixel size. Qt calls that a binding loop, refuses to settle it, and leaves
-    // whichever value it happened to see first -- so the rings were sized by an
-    // accident of evaluation order and the log filled with one warning per
-    // gauge per repaint. Height now follows from the width instead of feeding
+    // Subtracting the legend's measured height from the gauge's own would make
+    // the legend an input to the scale that sets the legend's pixel size. Qt
+    // calls that a binding loop, refuses to settle it, and leaves whichever value
+    // it saw first -- rings sized by an accident of evaluation order, and one
+    // warning per gauge per repaint. Height follows from the width instead of
     // back into it.
     readonly property real _unit: width / _designDial
 
