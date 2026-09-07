@@ -1701,10 +1701,17 @@ inline constexpr int AudioLevelFullScale = 0x7fff;
 }
 
 /// @param raw A meter reading against AudioLevelFullScale.
-/// @return It as a percentage of full scale.
+/// @return It as a percentage of full scale, 0 to 100.
+///
+/// Clamped, because the two scales do not match: a meter word is sixteen bits and
+/// reaches 0xffff, while full scale is 0x7fff, so the top half of the range
+/// converts to between 100 and 199. Nothing downstream clamped either, and a ring
+/// gauge drawing 199% of a 270-degree sweep is a complete circle in the clipping
+/// colour -- which is what the deck's panel showed for a microphone that was
+/// reading 2%.
 [[nodiscard]] constexpr int toPercent(int raw) noexcept
 {
-    return (raw * 100) / AudioLevelFullScale;
+    return std::clamp((raw * 100) / AudioLevelFullScale, 0, 100);
 }
 
 /// @param low The less significant byte.

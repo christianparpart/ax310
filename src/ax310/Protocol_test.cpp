@@ -121,7 +121,8 @@ TEST_CASE("the wire report is exactly the size the device sends", "[protocol]")
 
     // Every field the decoder reads has to fit inside the report.
     CHECK(protocol::KnobValuesOffset + KnobCount <= protocol::ControlReportSize);
-    CHECK(protocol::AudioMetersOffset + (protocol::AudioMeterCount * 2) <= protocol::ControlReportSize);
+    CHECK(protocol::AudioMetersOffset + (protocol::AudioMeterCount * protocol::AudioMeterStride)
+          <= protocol::ControlReportSize);
     CHECK(protocol::TouchYOffset + 1 < protocol::ControlReportSize);
 }
 
@@ -184,6 +185,24 @@ TEST_CASE("a touch report decodes little-endian while its meters decode big-endi
     CHECK(report.touchX == 700);
     CHECK(report.touchY == 300);
     CHECK(protocol::toPercent(report.audioMeters[0]) == 100);
+}
+
+TEST_CASE("a meter above full scale is still a percentage", "[protocol][meters]")
+{
+    // A meter word is sixteen bits and reaches 0xffff; full scale is 0x7fff. The
+    // top half of that range converted to between 100 and 199, and nothing
+    // downstream clamped -- a ring gauge drew 199% of its 270-degree sweep as a
+    // complete circle in the clipping colour, on a microphone reading 2%.
+    CHECK(protocol::toPercent(0x0000) == 0);
+    CHECK(protocol::toPercent(protocol::AudioLevelFullScale) == 100);
+    CHECK(protocol::toPercent(0xffff) == 100);
+
+    for (int raw = 0; raw <= 0xffff; raw += 0x40)
+    {
+        INFO("raw " << raw);
+        REQUIRE(protocol::toPercent(raw) >= 0);
+        REQUIRE(protocol::toPercent(raw) <= 100);
+    }
 }
 
 TEST_CASE("audio meters decode big-endian", "[protocol]")

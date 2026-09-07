@@ -518,14 +518,15 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
                        logTo(_logger, LogLevel::Debug, "event: screen {},{}", e.x, e.y);
                    },
                    [this](AudioMetersChanged const& e) {
-                       logTo(_logger,
-                             LogLevel::Debug,
-                             // Named by position, because what they measure is
-                             // not settled -- and indexed against the array's
-                             // actual extent, which is two and has been six.
-                             "event: meters {} {}",
-                             e.levels[0],
-                             e.levels[1]);
+                       // All of them, by track. Two of six answered no question
+                       // anybody asks of a meter, and this event is already
+                       // deduplicated in the driver, so it costs one line per
+                       // reading that actually changed rather than one per report.
+                       std::string reading;
+                       for (auto const knob: AllKnobs)
+                           reading += std::format(" {}={}", nameOf(knob), e.levels[indexOf(knob)]);
+
+                       logTo(_logger, LogLevel::Debug, "event: meters{}", reading);
                    },
                    [this](ConnectionChanged const& e) {
                        logTo(_logger, LogLevel::Info, "connection state {}", static_cast<int>(e.state));

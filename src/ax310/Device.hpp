@@ -389,9 +389,19 @@ class Device
     int _touchY = 0;
     ReportState _last;
 
+    /// What _audioMeters holds for a channel nothing has been published for. A
+    /// percentage is never negative, so the first real reading always differs
+    /// from it and always goes out.
+    static constexpr int NoAudioMeterYet = -1;
+
     /// The meters as last published, so an unchanged set is not re-sent at the
-    /// report rate.
-    std::array<int, protocol::AudioMeterCount> _audioMeters { -1, -1, -1, -1, -1, -1 };
+    /// report rate. connect() puts every entry back to NoAudioMeterYet, so a
+    /// session never inherits a reading taken before it.
+    std::array<int, protocol::AudioMeterCount> _audioMeters = [] {
+        std::array<int, protocol::AudioMeterCount> nothing {};
+        nothing.fill(NoAudioMeterYet);
+        return nothing;
+    }();
 
     /// The DSP command bodies as this driver last sent them.
     ///
