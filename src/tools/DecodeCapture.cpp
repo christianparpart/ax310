@@ -157,16 +157,45 @@ struct Inbound
     return summary;
 }
 
+/// One host-to-device command, and when it went out.
+struct TimedCommand
+{
+    std::string text;
+
+    /// Microseconds since the command before it, or 0 for the first.
+    ///
+    /// The gap rather than the absolute stamp, because the gap is the question:
+    /// this deck applies only some of a run of records sent too close together,
+    /// so what the vendor's software waited between two writes is a fact of the
+    /// protocol and not an artefact of the capture.
+    std::int64_t sincePreviousMicroseconds = 0;
+};
+
+/// @param microseconds A gap between two commands, or 0 for the first.
+/// @return It as a column: blank for the first command, milliseconds otherwise.
+///
+/// Milliseconds because that is the scale the deck cares about -- its handshake
+/// wants ten between payloads -- and a microsecond column would be six digits of
+/// noise around the one number worth reading.
+[[nodiscard]] std::string gapText(std::int64_t microseconds)
+{
+    if (microseconds == 0)
+        return {};
+
+    return std::format("+{}.{:03d}ms", microseconds / 1000, microseconds % 1000);
+}
+
 /// What one capture contained.
 struct Decoded
 {
-    std::vector<std::string> commands;
+    std::vector<TimedCommand> commands;
     std::size_t screenChunks = 0;
 };
 
 [[nodiscard]] Decoded decode(std::vector<tools::CapturedUrb> const& urbs)
 {
     Decoded decoded;
+    std::int64_t previous = 0;
     for (auto const& urb: urbs)
     {
         // Completions carry no new outbound payload; counting them would report
@@ -186,7 +215,14 @@ struct Decoded
         auto const payload =
             std::span { urb.payload }.first(std::min(urb.payload.size(), protocol::PaddedReportSize));
         if (auto line = describeCommand(payload); line)
-            decoded.commands.push_back(std::move(*line));
+        {
+            decoded.commands.push_back(TimedCommand {
+                .text = std::move(*line),
+                .sincePreviousMicroseconds =
+                    previous == 0 ? 0 : urb.timestampMicroseconds - previous,
+            });
+            previous = urb.timestampMicroseconds;
+        }
     }
 
     return decoded;
@@ -260,7 +296,11 @@ int main(int argc, char* argv[])
     if (argc == 2)
     {
         for (std::size_t index = 0; index < first->commands.size(); ++index)
-            writeLine(console, "{:3d}  {}", index, first->commands[index]);
+            writeLine(console,
+                      "{:3d}  {:>10}  {}",
+                      index,
+                      gapText(first->commands[index].sincePreviousMicroseconds),
+                      first->commands[index].text);
 
         writeErrorLine(console, "\n{} host-to-device commands ({} screen chunks skipped)",
                      first->commands.size(),
@@ -273,12 +313,21 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
 
     std::size_t shown = 0;
-    for (auto const& line: second->commands)
+    for (auto const& command: second->commands)
     {
-        if (std::ranges::find(first->commands, line) != first->commands.end())
+        // Matched on the text alone. A gap is a property of when a command went
+        // out rather than of what it is, so two runs of one action differ in it
+        // every time and comparing it would call every command new.
+        if (std::ranges::any_of(first->commands, [&](TimedCommand const& known) {
+                return known.text == command.text;
+            }))
             continue;
 
-        writeLine(console, "{:3d}  {}", shown++, line);
+        writeLine(console,
+                  "{:3d}  {:>10}  {}",
+                  shown++,
+                  gapText(command.sincePreviousMicroseconds),
+                  command.text);
     }
 
     writeErrorLine(console, "\n{} new of {} (baseline had {}, {} screen chunks skipped)",

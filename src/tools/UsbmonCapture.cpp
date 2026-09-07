@@ -34,6 +34,12 @@ namespace
     constexpr std::size_t DeviceOffset = 11;
     constexpr std::size_t UrbLengthOffset = 32;
 
+    /// The URB's own timestamp: seconds as a signed 64-bit at 16, microseconds as
+    /// a signed 32-bit at 24. The pcap record in front of it carries a timestamp
+    /// too, but this is the one the kernel took when the transfer happened.
+    constexpr std::size_t TimestampSecondsOffset = 16;
+    constexpr std::size_t TimestampMicrosecondsOffset = 24;
+
     /// 'S' marks a submission -- the host handing the URB over -- and 'C' its
     /// completion. Which one carries the bytes depends on direction: an OUT
     /// transfer has them at submission, an **IN** transfer only at completion,
@@ -51,6 +57,18 @@ namespace
         {
             auto const byte = static_cast<std::uint32_t>(bytes[index]);
             value |= isBigEndian ? byte << (8U * (3U - index)) : byte << (8U * index);
+        }
+        return value;
+    }
+
+    [[nodiscard]] std::uint64_t readDoubleWord(std::span<std::uint8_t const> bytes,
+                                               bool isBigEndian) noexcept
+    {
+        std::uint64_t value = 0;
+        for (std::size_t index = 0; index < 8; ++index)
+        {
+            auto const byte = static_cast<std::uint64_t>(bytes[index]);
+            value |= isBigEndian ? byte << (8U * (7U - index)) : byte << (8U * index);
         }
         return value;
     }
@@ -114,6 +132,11 @@ std::expected<std::vector<CapturedUrb>, CaptureError> readUsbmonCapture(std::str
         if (urbType != SubmitMarker && urbType != CompleteMarker)
             continue;
 
+        auto const seconds =
+            static_cast<std::int64_t>(readDoubleWord(record.subspan(TimestampSecondsOffset), isBigEndian));
+        auto const microseconds = static_cast<std::int32_t>(
+            readWord(record.subspan(TimestampMicrosecondsOffset), isBigEndian));
+
         auto const body = record.subspan(UsbmonHeaderSize);
         urbs.push_back(CapturedUrb {
             .transferType = record[TransferTypeOffset],
@@ -121,6 +144,7 @@ std::expected<std::vector<CapturedUrb>, CaptureError> readUsbmonCapture(std::str
             .device = record[DeviceOffset],
             .urbLength = readWord(record.subspan(UrbLengthOffset), isBigEndian),
             .isCompletion = urbType == CompleteMarker,
+            .timestampMicroseconds = (seconds * 1'000'000) + microseconds,
             .payload = { body.begin(), body.end() },
         });
     }
