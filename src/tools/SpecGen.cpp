@@ -261,13 +261,16 @@ void writeSpec(Document& out)
     out.line("| Address | Name | Preserved on connect | Writable |");
     out.line("| --- | --- | --- | --- |");
     auto byAddress = std::vector(PropertyNames.begin(), PropertyNames.end());
-    std::ranges::sort(byAddress, {}, &WireName::value);
+    std::ranges::sort(byAddress, {}, &WireName<Property>::value);
     for (auto const& row: byAddress)
+    {
+        auto const address = static_cast<std::uint8_t>(row.value);
         out.line("| `{}` | {} | {} | {} |",
-                 hex(row.value),
+                 hex(address),
                  orDash(row.name),
-                 preservedLength(row.value),
-                 isDangerous(row.value) ? "**refused**" : "yes");
+                 preservedLength(address),
+                 isDangerous(address) ? "**refused**" : "yes");
+    }
     out.line("");
     out.line("{} addresses are read before the handshake and written back after it, because "
              "the captured init sequence is somebody's saved configuration rather than an "
@@ -339,7 +342,7 @@ void writeSpec(Document& out)
     out.line("| Command | Name |");
     out.line("| --- | --- |");
     for (auto const& row: FramedCommandNames)
-        out.line("| `{}` | {} |", hex(row.value), orDash(row.name));
+        out.line("| `{}` | {} |", hex(static_cast<std::uint8_t>(row.value)), orDash(row.name));
     out.line("");
 
     out.line("### Parameters");

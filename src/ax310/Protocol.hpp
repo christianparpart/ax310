@@ -1305,55 +1305,97 @@ static_assert(framedDefaultIndex(FramedCommand::DelayEffectParameters).has_value
 /// enumerations are sparse: they name the handful of values the hardware has
 /// confirmed out of a 256-entry space, and most of that space stays unnamed on
 /// purpose.
+template <typename Enum>
 struct WireName
 {
-    std::uint8_t value;    ///< The address or command byte.
+    Enum value;            ///< The address or command, as its enumerator.
     std::string_view name; ///< What to call it when printing a capture.
 };
 
+/// Templated on the enumeration rather than on the value.
+///
+/// Holding the enumerator instead of a byte is what keeps the wire number in one
+/// place: a row can only name something the enumeration already defines, so a
+/// table and an enum cannot disagree about an address. Templating on the *value*
+/// instead would make every row its own type, which would take these out of an
+/// array and out of reach of nameIn().
+///
+/// A few addresses have no enumerator -- the per-track level slots are a base
+/// plus an offset, not names -- and those rows cast the computed address rather
+/// than writing a literal, so the arithmetic stays the single source.
+
 /// Names for the property addresses that have one.
-inline constexpr auto PropertyNames = std::to_array<WireName>({
-    { .value = 0x0f, .name = "DisplayPower" },
-    { .value = 0x14, .name = "LineOutSource (00 creator, 01 audience, 02 chat mic)" },
-    { .value = 0x15, .name = "SelectedMix (00 creator, 01 audience)" },
-    { .value = 0x1d, .name = "SettingsTransaction (01 begin, 00 end)" },
-    { .value = 0x1e, .name = "KnobLedBrightness" },
-    { .value = 0x1f, .name = "MicGain" },
-    { .value = 0x20, .name = "MicConfiguration (bit 0 phantom, bit 3 effects bypass)" },
-    { .value = 0x21, .name = "KnobLedSelect / mixer mode" },
-    { .value = 0x27, .name = "creator mix levels (base; +track)" },
-    { .value = 0x2a, .name = "creator System level" },
-    { .value = 0x2b, .name = "creator Game level" },
-    { .value = 0x2c, .name = "creator Chat level" },
-    { .value = 0x31, .name = "audience System level" },
-    { .value = 0x2e, .name = "audience mix levels (base; +track)" },
-    { .value = 0x35, .name = "KnobPropertyAt35" },
-    { .value = 0x3c, .name = "HeadphoneVolume" },
-    { .value = 0x3d, .name = "LineOutVolume" },
+inline constexpr auto PropertyNames = std::to_array<WireName<Property>>({
+    { .value = Property::DisplayPower, .name = "DisplayPower" },
+    { .value = Property::LineOutSource, .name = "LineOutSource (00 creator, 01 audience, 02 chat mic)" },
+    { .value = Property::SelectedMix, .name = "SelectedMix (00 creator, 01 audience)" },
+    { .value = Property::SettingsTransaction, .name = "SettingsTransaction (01 begin, 00 end)" },
+    { .value = Property::KnobLedBrightness, .name = "KnobLedBrightness" },
+    { .value = Property::MicGain, .name = "MicGain" },
+    { .value = Property::MicConfiguration, .name = "MicConfiguration (bit 0 phantom, bit 3 effects bypass)" },
+    { .value = Property::KnobLedSelect, .name = "KnobLedSelect / mixer mode" },
+    { .value = Property::CreatorMixLevels, .name = "creator mix levels (base; +track)" },
+    { .value = Property::AudienceMixLevels, .name = "audience mix levels (base; +track)" },
+    { .value = Property::KnobPropertyAt35, .name = "KnobPropertyAt35" },
+    { .value = Property::HeadphoneVolume, .name = "HeadphoneVolume" },
+    { .value = Property::LineOutVolume, .name = "LineOutVolume" },
+
+    // Slots inside the two level blocks, which are a base plus a track index and
+    // so have no enumerators of their own. Computed rather than written out, so
+    // the arithmetic in levelAddressOf() stays the only place the sum is made.
+    // Only the four the captures happened to exercise are named; the other eight
+    // are equally addressable and equally nameable if anyone wants them.
+    { .value = static_cast<Property>(levelAddressOf(Property::CreatorMixLevels, KnobId::System)),
+      .name = "creator System level" },
+    { .value = static_cast<Property>(levelAddressOf(Property::CreatorMixLevels, KnobId::Game)),
+      .name = "creator Game level" },
+    { .value = static_cast<Property>(levelAddressOf(Property::CreatorMixLevels, KnobId::Chat)),
+      .name = "creator Chat level" },
+    { .value = static_cast<Property>(levelAddressOf(Property::AudienceMixLevels, KnobId::System)),
+      .name = "audience System level" },
 });
 
+// A duplicated row would shadow the later one and never be noticed, because the
+// lookup stops at the first match and both would name something plausible.
+static_assert([] {
+    for (std::size_t i = 0; i < PropertyNames.size(); ++i)
+        for (std::size_t j = i + 1; j < PropertyNames.size(); ++j)
+            if (PropertyNames[i].value == PropertyNames[j].value)
+                return false;
+    return true;
+}(), "two rows of PropertyNames name the same address");
+
 /// Names for the framed commands that have one.
-inline constexpr auto FramedCommandNames = std::to_array<WireName>({
-    { .value = 0x85, .name = "DelayEffectEnable (reverb/echo)" },
-    { .value = 0x87, .name = "EqualiserEnableA" },
-    { .value = 0x88, .name = "EqualiserEnableB" },
-    { .value = 0x94, .name = "DelayEffectParameters (byte 14: 1 reverb, 2 echo)" },
-    { .value = 0x9c, .name = "EqualiserEnableC" },
-    { .value = 0x9e, .name = "NoiseGateParameters" },
-    { .value = 0x9b, .name = "CompressorEnable" },
-    { .value = 0x9f, .name = "CompressorParameters" },
-    { .value = 0xa3, .name = "EqualiserBand" },
-    { .value = 0xb2, .name = "Commit" },
+inline constexpr auto FramedCommandNames = std::to_array<WireName<FramedCommand>>({
+    { .value = FramedCommand::DelayEffectEnable, .name = "DelayEffectEnable (reverb/echo)" },
+    { .value = FramedCommand::EqualiserEnableA, .name = "EqualiserEnableA" },
+    { .value = FramedCommand::EqualiserEnableB, .name = "EqualiserEnableB" },
+    { .value = FramedCommand::DelayEffectParameters, .name = "DelayEffectParameters (byte 14: 1 reverb, 2 echo)" },
+    { .value = FramedCommand::EqualiserEnableC, .name = "EqualiserEnableC" },
+    { .value = FramedCommand::NoiseGateParameters, .name = "NoiseGateParameters" },
+    { .value = FramedCommand::CompressorEnable, .name = "CompressorEnable" },
+    { .value = FramedCommand::CompressorParameters, .name = "CompressorParameters" },
+    { .value = FramedCommand::EqualiserBand, .name = "EqualiserBand" },
+    { .value = FramedCommand::Commit, .name = "Commit" },
 });
+
+static_assert([] {
+    for (std::size_t i = 0; i < FramedCommandNames.size(); ++i)
+        for (std::size_t j = i + 1; j < FramedCommandNames.size(); ++j)
+            if (FramedCommandNames[i].value == FramedCommandNames[j].value)
+                return false;
+    return true;
+}(), "two rows of FramedCommandNames name the same command");
 
 /// @param table One of the name tables above.
 /// @param value The byte to look up.
 /// @return Its name, or an empty view when it has none.
-[[nodiscard]] constexpr std::string_view nameIn(std::span<WireName const> table,
+template <typename Enum, std::size_t N>
+[[nodiscard]] constexpr std::string_view nameIn(std::array<WireName<Enum>, N> const& table,
                                                 std::uint8_t value) noexcept
 {
     for (auto const& entry: table)
-        if (entry.value == value)
+        if (static_cast<std::uint8_t>(entry.value) == value)
             return entry.name;
 
     return {};

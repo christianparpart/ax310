@@ -242,7 +242,10 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
                           static_cast<std::uint8_t>(LineOutSource::AudienceMix)),
     protocol::setProperty(protocol::Property::KnobLedSelect, std::uint8_t { 0x80 }),
     protocol::setPropertyAt(0x22, std::uint8_t { 0x12 }),
-    protocol::setProperty(protocol::Property::CreatorMixLevels, std::uint8_t { 0x0a }),
+    // One byte at the block's base address, which is the Mic track and not the
+    // block -- written through levelAddressOf() so it cannot read as the latter.
+    protocol::setPropertyAt(protocol::levelAddressOf(protocol::Property::CreatorMixLevels, KnobId::Mic),
+                            std::uint8_t { 0x0a }),
     protocol::setProperty(protocol::Property::KnobPropertyAt35, std::uint8_t { 0x0a }),
     protocol::setProperty(protocol::Property::CreatorMixLevels,
                           std::to_array<std::uint8_t>({

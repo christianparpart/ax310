@@ -383,12 +383,22 @@ TEST_CASE("the spec's tables have no phantom rows", "[protocol][spec]")
     {
         UNSCOPED_INFO("property " << static_cast<int>(row.value));
         CHECK_FALSE(row.name.empty());
+        CHECK(nameIn(PropertyNames, static_cast<std::uint8_t>(row.value)) == row.name);
     }
     for (auto const& row: FramedCommandNames)
     {
         UNSCOPED_INFO("command " << static_cast<int>(row.value));
-        CHECK(row.value != 0x00);
+
+        // This guarded against a phantom all-zero row, which a table declared
+        // with a length longer than its initialiser list used to leave behind.
+        // std::to_array removed that possibility and the enumerated value type
+        // removed the rest: a row can only carry a command the enum defines.
+        CHECK(static_cast<std::uint8_t>(row.value) != 0x00);
         CHECK_FALSE(row.name.empty());
+
+        // And every row is reachable through the lookup callers actually use,
+        // which is what a duplicate address would break.
+        CHECK(nameIn(FramedCommandNames, static_cast<std::uint8_t>(row.value)) == row.name);
     }
     for (auto const& row: PreservedAddresses)
         CHECK(row.length > 0);

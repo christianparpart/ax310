@@ -197,6 +197,12 @@ captures name them.
   and sent immediately before `CompressorEnable`. It is not in `InitPayloads`,
   which came from an older capture, and no effect capture triggers it. The
   position suggests a paired enable; nothing else does.
+- **`PreservedAddresses` reads `0x11` with length 3; the vendor reads it with 1.**
+  The vendor *writes* three bytes there, so three is a legal write length, but no
+  capture shows a three-byte read. Since the deck does not clear its reply buffer,
+  a three-byte read of a one-byte register would capture one real byte and two
+  belonging to the previous answer — and the restore path would then write those
+  two back. Worth checking against hardware with `--dump` before trusting it.
 - **`0x11 = 0x01`, `0x12 = 0x08`, `0x13 = 0x01`, `0x22 = 0x02`** — the values are
   now known from the startup replies; what they mean is not.
 - **`0x20` bits 1 and 2** are set in every capture and nothing is known to clear
