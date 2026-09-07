@@ -152,23 +152,116 @@ enum class CommandKind : std::uint8_t
 /// was. It is not. The captured sequences use six more, and the display's
 /// brightness turned out to live in one of them:
 ///
-///   | group  | seen doing |
+///   | group  | what it is |
 ///   | ------ | ---------- |
-///   | `0x01` | read three times by init, address and length both zero |
-///   | `0x03` | written once by init, `01 03 01` |
-///   | `0x04` | written twice by shutdown, `01 04 01` |
-///   | `0x09` | written by both, `01 09 02` |
+///   | `0x01` | the firmware version, see IdentityGroup |
+///   | `0x03` | written once by init, `01 03 01`; unknown |
+///   | `0x04` | written twice by shutdown, `01 04 01`; unknown |
+///   | `0x09` | written by both, `01 09 02`; unknown |
 ///   | `0x0a` | the display: brightness and blanking, see DisplayGroup |
 ///   | `0x10` | properties |
-///   | `0xa0` | read with length 1, written with length 4, both all-zero |
+///   | `0xa0` | the serial number, see SerialGroup |
 ///
 /// The four bytes read the same way in every group -- kind, group, address,
 /// length, then that many values -- so all of them go through commandAt(). What
-/// an address *means* is the group's own business, and for five of these nobody
-/// knows. Since everything else in the init sequence is now accounted for as
-/// either interrogation or somebody's settings, whatever actually wakes the
-/// hardware is most likely among them.
+/// an address *means* is the group's own business, and the *replies* do not all
+/// share the layout: a property answers with its address and length echoed back,
+/// group `0x01` runs straight into data, and group `0xa0` echoes four bytes first.
+///
+/// A rule that applies to every read: **the deck does not clear its reply buffer.**
+/// A short answer is followed by whatever the previous answer left there, so a
+/// caller must take exactly the length it asked for and no more. This is why the
+/// probe tool reads `0x0f` between interesting registers -- that answers zeroes,
+/// which makes a stale tail obvious instead of plausible.
 inline constexpr std::uint8_t PropertyGroup = 0x10;
+
+/// The group that answers with the deck's firmware version.
+///
+/// The first command the vendor software sends, before anything else: a read of
+/// group `0x01` with a zero address and zero length. What comes back is a fixed
+/// block, decoded by matching it against the version string Creator Central was
+/// showing for the same deck at the same time.
+inline constexpr std::uint8_t IdentityGroup = 0x01;
+
+/// The group that answers with the deck's serial number, as ASCII digits.
+inline constexpr std::uint8_t SerialGroup = 0xa0;
+
+/// Where the values start in a reply from IdentityGroup.
+///
+/// The reply echoes the kind and the group and then runs straight into data --
+/// there is no address or length in between, unlike a property reply.
+inline constexpr std::size_t IdentityValuesOffset = 2;
+
+/// Where the ASCII starts in a reply from SerialGroup, which does echo four bytes.
+inline constexpr std::size_t SerialValuesOffset = 4;
+
+/// The deck's firmware version, as Creator Central displays it.
+///
+/// Laid out from one device and one capture, so the offsets are observed rather
+/// than specified. Every field was confirmed against the string the vendor showed
+/// for that deck: `1.5 10.53 ( 24011113 / 23122210 / 22051216 / a5 / 57 )`.
+///
+/// The vendor prints the build stamps and both version numbers as **decimal**
+/// renderings of each byte -- `0x18` shows as `24` -- and the two trailing codes
+/// as **hexadecimal**. That inconsistency is the vendor's; this keeps the bytes.
+struct FirmwareVersion
+{
+    std::array<std::uint8_t, 2> version {};       ///< `01 05`, shown as 1.5.
+    std::array<std::uint8_t, 2> secondVersion {}; ///< `0a 35`, shown as 10.53.
+    std::array<std::uint8_t, 4> buildA {};        ///< `18 01 0b 0d`, shown as 24011113.
+    std::array<std::uint8_t, 4> buildB {};
+    std::array<std::uint8_t, 4> buildC {};
+    std::uint8_t codeA {};                        ///< `a5`, shown as hex.
+    std::uint8_t codeB {};                        ///< `57`, shown as hex.
+};
+
+/// @param reply A reply to a read of IdentityGroup.
+/// @return What it says, or nothing if it is not such a reply.
+[[nodiscard]] constexpr std::optional<FirmwareVersion> parseFirmwareVersion(
+    std::span<std::uint8_t const> reply) noexcept
+{
+    constexpr std::size_t Needed = IdentityValuesOffset + 19;
+    if (reply.size() < Needed || reply[0] != static_cast<std::uint8_t>(CommandKind::Get)
+        || reply[1] != IdentityGroup)
+        return std::nullopt;
+
+    auto const at = [reply](std::size_t index) {
+        return reply[IdentityValuesOffset + index];
+    };
+
+    return FirmwareVersion {
+        .version = { at(12), at(13) },
+        .secondVersion = { at(14), at(15) },
+        .buildA = { at(0), at(1), at(2), at(3) },
+        .buildB = { at(4), at(5), at(6), at(7) },
+        .buildC = { at(8), at(9), at(10), at(11) },
+        // at(16) is 0x03 on the one deck seen and is not part of what the vendor
+        // displays, so it is read past rather than guessed at.
+        .codeA = at(17),
+        .codeB = at(18),
+    };
+}
+
+/// @param reply A reply to a read of SerialGroup.
+/// @return The ASCII digits, or an empty span if it is not such a reply.
+///
+/// The run is delimited by the first byte that is not a digit, because the deck
+/// leaves the previous reply behind whatever it writes and the tail is somebody
+/// else's answer rather than padding.
+[[nodiscard]] constexpr std::span<std::uint8_t const> parseSerialNumber(
+    std::span<std::uint8_t const> reply) noexcept
+{
+    if (reply.size() <= SerialValuesOffset || reply[0] != static_cast<std::uint8_t>(CommandKind::Get)
+        || reply[1] != SerialGroup)
+        return {};
+
+    auto const digits = reply.subspan(SerialValuesOffset);
+    std::size_t length = 0;
+    while (length < digits.size() && digits[length] >= '0' && digits[length] <= '9')
+        ++length;
+
+    return digits.first(length);
+}
 
 /// Builds any command in the four-byte grammar every group shares.
 ///

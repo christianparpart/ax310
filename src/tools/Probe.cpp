@@ -149,6 +149,83 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
     }
 }
 
+/// Reads one of the identity groups, which answer differently from a property.
+///
+/// @param transport An open control interface.
+/// @param group Which group to read.
+/// @param reply Where to put the answer.
+/// @return Whether an answer came back.
+[[nodiscard]] bool readGroup(HidApiTransport& transport, std::uint8_t group,
+                             protocol::FeatureReport& reply)
+{
+    auto const request = protocol::frameFeatureReport(
+        protocol::commandAt(protocol::CommandKind::Get, group, 0x00, {}, group == protocol::SerialGroup ? 1 : 0));
+    if (!transport.sendFeatureReport(request))
+        return false;
+
+    return transport.getFeatureReport(reply).has_value();
+}
+
+/// Prints what the deck says it is: `--identify`.
+///
+/// The same two reads the vendor software opens with, formatted the way Creator
+/// Central shows them, so the two can be compared without translating anything.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @return Process status.
+int runIdentify(HidApiTransport& transport, IConsole& console)
+{
+    protocol::FeatureReport reply {};
+    if (!readGroup(transport, protocol::IdentityGroup, reply))
+    {
+        writeErrorLine(console, "the deck did not answer the identity read");
+        return EXIT_FAILURE;
+    }
+
+    auto const payload = protocol::reportPayload(reply);
+    auto const version = protocol::parseFirmwareVersion(payload);
+    if (!version)
+    {
+        writeErrorLine(console, "the identity reply was not the shape we know");
+        return EXIT_FAILURE;
+    }
+
+    auto const stamp = [](std::array<std::uint8_t, 4> const& build) {
+        return std::format("{:02}{:02}{:02}{:02}", build[0], build[1], build[2], build[3]);
+    };
+
+    writeLine(console,
+              "firmware  {}.{} {}.{} ( {} / {} / {} / {:02x} / {:02x} )",
+              version->version[0],
+              version->version[1],
+              version->secondVersion[0],
+              version->secondVersion[1],
+              stamp(version->buildA),
+              stamp(version->buildB),
+              stamp(version->buildC),
+              version->codeA,
+              version->codeB);
+
+    protocol::FeatureReport serialReply {};
+    if (!readGroup(transport, protocol::SerialGroup, serialReply))
+    {
+        writeErrorLine(console, "the deck did not answer the serial read");
+        return EXIT_FAILURE;
+    }
+
+    auto const serial = protocol::parseSerialNumber(protocol::reportPayload(serialReply));
+    if (serial.empty())
+    {
+        writeErrorLine(console, "the serial reply carried no digits");
+        return EXIT_FAILURE;
+    }
+
+    writeLine(console, "serial    {}", std::string_view {
+        reinterpret_cast<char const*>(serial.data()), serial.size() });
+    return EXIT_SUCCESS;
+}
+
 /// Writes one track's level in one mix.
 [[nodiscard]] bool setLevel(HidApiTransport& transport, IConsole& console,
                             protocol::Property block, KnobId knob, std::uint8_t level)
@@ -930,6 +1007,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
     writeErrorLine(console, "  --panel-off            blank the panel; touch it to wake it again");
     writeErrorLine(console, "  --panel-brightness <19..64>  set panel brightness, percent in hex");
+    writeErrorLine(console, "  --identify                              firmware version and serial number");
     writeErrorLine(console, "  --button <tl|tr|bl|br> <rr> <gg> <bb>   light one function button");
     writeErrorLine(console, "  --knob-colour <rr> <gg> <bb>            colour the selected mix's rings");
     writeErrorLine(console, "  --surround off                          turn the surround strip off");
@@ -993,6 +1071,9 @@ int main(int argc, char* argv[])
     HidApiTransport transport;
     if (!openControl(transport, console))
         return EXIT_FAILURE;
+
+    if (command == "--identify" && argc == 2)
+        return runIdentify(transport, console);
 
     if (command == "--dump")
     {

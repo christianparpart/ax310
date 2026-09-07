@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <ios>
 #include <span>
+#include <string>
 
 using namespace ax310;
 
@@ -649,4 +650,56 @@ TEST_CASE("the vendor sequences carry nothing past their stated length", "[proto
 
     CHECK(std::ranges::all_of(commands::InitPayloads, trailingIsZero));
     CHECK(std::ranges::all_of(commands::ShutdownPayloads, trailingIsZero));
+}
+
+TEST_CASE("the identity group answers with the firmware version", "[protocol][identity]")
+{
+    using namespace ax310::protocol;
+
+    // The reply the deck gave to the first command of the vendor's handshake,
+    // byte for byte. Creator Central was showing
+    //     1.5 10.53 ( 24011113 / 23122210 / 22051216 / a5 / 57 )
+    // for the same deck at the same moment, which is what decoded it.
+    constexpr auto Reply = std::to_array<std::uint8_t>({
+        0x81, 0x01, 0x18, 0x01, 0x0b, 0x0d, 0x17, 0x0c, 0x16, 0x0a, 0x16, 0x05,
+        0x0c, 0x10, 0x01, 0x05, 0x0a, 0x35, 0x03, 0xa5, 0x57, 0x00, 0x01, 0x08, 0x01,
+    });
+
+    auto const version = parseFirmwareVersion(Reply);
+    REQUIRE(version.has_value());
+
+    // Each byte is displayed as its own decimal value, so 0x18 reads as 24.
+    CHECK(version->buildA == std::array<std::uint8_t, 4> { 24, 1, 11, 13 });
+    CHECK(version->buildB == std::array<std::uint8_t, 4> { 23, 12, 22, 10 });
+    CHECK(version->buildC == std::array<std::uint8_t, 4> { 22, 5, 12, 16 });
+    CHECK(version->version == std::array<std::uint8_t, 2> { 1, 5 });
+    CHECK(version->secondVersion == std::array<std::uint8_t, 2> { 10, 53 });
+
+    // These two the vendor shows as hexadecimal, unlike everything above.
+    CHECK(version->codeA == 0xa5);
+    CHECK(version->codeB == 0x57);
+
+    // A property reply is not an identity reply, however long it is.
+    CHECK(!parseFirmwareVersion(std::to_array<std::uint8_t>({ 0x81, 0x10, 0x1e, 0x01, 0x09 })));
+    CHECK(!parseFirmwareVersion(std::to_array<std::uint8_t>({ 0x81, 0x01 })));
+}
+
+TEST_CASE("the serial group answers with ASCII digits", "[protocol][identity]")
+{
+    using namespace ax310::protocol;
+
+    // Also captured. The tail past the digits is the previous reply, which the
+    // deck does not clear -- so the run has to be delimited, not just taken whole.
+    constexpr auto Reply = std::to_array<std::uint8_t>({
+        0x81, 0xa0, 0x00, 0x00, 0x35, 0x33, 0x31, 0x31, 0x32, 0x39, 0x31, 0x35,
+        0x30, 0x30, 0x30, 0x35, 0x36, 0x01, 0x05, 0x0a, 0x35, 0x01, 0x05, 0x08, 0x01,
+    });
+
+    auto const serial = parseSerialNumber(Reply);
+    REQUIRE(serial.size() == 13);
+    CHECK(std::string(serial.begin(), serial.end()) == "5311291500056");
+
+    // Stops at the first non-digit rather than running into the stale tail.
+    CHECK(serial.back() == '6');
+    CHECK(parseSerialNumber(std::to_array<std::uint8_t>({ 0x81, 0x10, 0x1e, 0x01, 0x09 })).empty());
 }

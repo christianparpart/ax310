@@ -187,14 +187,18 @@ captures name them.
   darken the four buttons, dim and darken the rings, turn the surround strip off,
   set `DisplayPower` to `0x02` — bracketed twice by two writes in groups `0x04`
   and `0x09` that remain unidentified.
-- **Five command groups are unidentified** — `0x01`, `0x03`, `0x04`, `0x09` and
-  `0xa0` appear in the captured sequences with addresses and lengths but no known
-  meaning. `0x10` (properties) and `0x0a` (the display) are the only two
-  understood. Whatever wakes the hardware is most likely among them, since
-  everything else in the init sequence is now accounted for as either
-  interrogation or settings. The vendor's Audio Output pane was swept looking for
-  them and every control there landed in the property space instead, so they are
-  not reachable from that pane.
+- **Three command groups are unidentified** — `0x03`, `0x04` and `0x09`, each
+  written once or twice with a constant value and never read. `0x01` (firmware),
+  `0x0a` (display), `0x10` (properties) and `0xa0` (serial) are now known. The
+  three that remain are the only writes in either sequence that are neither
+  interrogation nor somebody's settings, which makes them the best remaining
+  candidates for whatever actually wakes the hardware.
+- **Framed command `0x9a`** — seen once, in the startup capture, carrying `0x00`
+  and sent immediately before `CompressorEnable`. It is not in `InitPayloads`,
+  which came from an older capture, and no effect capture triggers it. The
+  position suggests a paired enable; nothing else does.
+- **`0x11 = 0x01`, `0x12 = 0x08`, `0x13 = 0x01`, `0x22 = 0x02`** — the values are
+  now known from the startup replies; what they mean is not.
 - **`0x20` bits 1 and 2** are set in every capture and nothing is known to clear
   them. Two mic settings are accounted for; whatever these are is not in any pane
   that has been swept.

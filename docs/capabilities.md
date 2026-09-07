@@ -159,6 +159,8 @@ deck's own tracks behind a "show virtual devices" toggle.
 | Line Out source | `0x14` | ✅ creator mix, audience mix, or the chat mic |
 | Chat mic effects bypass | `0x20` bit 3 | ✅ captured from the vendor's dropdown |
 | Audio mixer sample rate | — | ✅ standard USB Audio Class, not this protocol; ALSA and PipeWire already set it |
+| Firmware version | group `0x01` | ✅ decoded against the version Creator Central displays; `ax310_probe --identify` |
+| Serial number | group `0xa0` | ✅ 13 ASCII digits |
 | Per-track volume | `0x27` and `0x2e` | ✅ two contiguous six-byte blocks, one per mix, `base + track`; all twelve read and written |
 | Creator ↔ Audience switch | `0x15` inside the `0x1d` fence | ✅ driven, both directions |
 | Single ↔ Dual Mix | `0x21` (`0x80` single / `0x00` dual), `0x22` | ◐ captured, **not driven** — `0x21` also selects which rings light and which it is doing is unsettled |
