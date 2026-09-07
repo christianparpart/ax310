@@ -17,6 +17,8 @@
 #include <ax310/Protocol.hpp>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -147,6 +149,33 @@ void dumpKnownRegisters(HidApiTransport& transport, IConsole& console)
 
         static_cast<void>(readRegister(transport, static_cast<std::uint8_t>(protocol::Property::DisplayPower), 1));
     }
+
+    // The audience mix's levels are not in that table -- the handshake does not
+    // write them, so there is nothing to preserve -- but a mixer question is
+    // never about one block. Read here so both are on screen together, next to
+    // the two registers that say which of them the deck is monitoring and which
+    // the rings are showing.
+    writeLine(console, "");
+
+    for (auto const& extra: { protocol::PreservedAddress { .address = std::to_underlying(
+                                                               protocol::Property::AudienceMixLevels),
+                                                           .length = protocol::KnobPropertyLength } })
+    {
+        auto const values = readRegister(transport, extra.address, extra.length);
+        auto const name = protocol::nameIn(protocol::PropertyNames, extra.address);
+
+        if (!values)
+        {
+            writeLine(console, "  0x{:02x}  {:<38}  <no answer>", extra.address, name);
+            continue;
+        }
+
+        std::string text;
+        for (auto const byte: *values)
+            text += std::format("{:02x} ", byte);
+
+        writeLine(console, "  0x{:02x}  {:<38}  {}", extra.address, name, text);
+    }
 }
 
 /// Sends one prepared request and collects the answer.
@@ -241,10 +270,9 @@ int runIdentify(HidApiTransport& transport, IConsole& console)
     return true;
 }
 
-/// What each button is called on the command line, indexed by Button. There is no
-/// nameOf(Button) in the driver -- the buttons carry no printed labels the way the
-/// knobs do, so a name for one is this tool's own convenience rather than a fact
-/// about the hardware.
+/// What each button is called on the command line, indexed by Button. Short
+/// because they are typed; nameOf(Button) is what output uses, since a person
+/// reading a result wants the position spelled out.
 inline constexpr std::array<std::string_view, ButtonCount> ButtonAbbreviations {
     "tl", "tr", "bl", "br"
 };
@@ -997,6 +1025,519 @@ int watchMeters(HidApiTransport& transport, IConsole& console, int seconds)
     return reports > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+/// One button or one knob, as the walk below saw it.
+struct InputObservation
+{
+    std::uint8_t raw = 0;   ///< The byte as it arrived, before any masking.
+    bool sawPress = false;
+    bool sawRelease = false;
+    std::chrono::milliseconds releaseAfter { 0 };
+};
+
+/// Everything the walk measured, so the printing is separate from the measuring.
+struct InputWalk
+{
+    std::array<InputObservation, ButtonCount> buttons {};
+    std::array<InputObservation, KnobCount> knobs {};
+    std::uint8_t together = 0; ///< The byte seen with two buttons held at once.
+    bool sawTogether = false;
+
+    /// Whether every button and every knob was actually pressed.
+    ///
+    /// A walk that gave up on a round says nothing about the rounds after it. A
+    /// press that arrives just after its own round's deadline satisfies the next
+    /// one, so one slow start attributes every later press to the wrong control
+    /// -- and the summary would report a table that disagrees with hardware it
+    /// never measured. Neither table is judged unless its walk was complete.
+    bool buttonsComplete = false;
+    bool knobsComplete = false;
+};
+
+/// How many press-waits' worth of time the knob window gets, since it covers six
+/// pushes rather than one.
+constexpr int KnobWindowRounds = 3;
+
+/// How many times a button round waits again before giving the walk up.
+constexpr int PressAttempts = 3;
+
+/// Reads reports until one's byte at @p offset satisfies @p wanted.
+///
+/// Two kinds of report are skipped. A screen touch, because byte 0 carries the
+/// event type there and a finger on the glass would read as buttons nobody is
+/// pressing. And the all-zero filler the deck interleaves between real reports,
+/// because a release has to be told apart from a gap -- both show zero in the
+/// byte, and only the filler is zero everywhere else.
+///
+/// @param transport An open control interface.
+/// @param offset Which byte of the report to watch.
+/// @param wanted What that byte has to satisfy.
+/// @param deadline When to give up.
+/// @return The byte that satisfied it, or nothing if the deadline passed first.
+template <typename Predicate>
+[[nodiscard]] std::optional<std::uint8_t> awaitByte(HidApiTransport& transport, std::size_t offset,
+                                                    Predicate wanted,
+                                                    std::chrono::steady_clock::time_point deadline)
+{
+    std::array<std::uint8_t, protocol::PaddedReportSize + 1> buffer {};
+
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        auto const bytesRead = transport.read(buffer, std::chrono::milliseconds { 100 });
+        if (!bytesRead)
+            return std::nullopt;
+        if (*bytesRead == 0)
+            continue;
+
+        auto const payload = protocol::reportPayload(std::span { buffer }.first(*bytesRead));
+        if (payload.size() <= offset)
+            continue;
+        if (payload[protocol::EventTypeOffset] == protocol::ScreenTouchEventType)
+            continue;
+        if (std::ranges::none_of(payload, [](std::uint8_t byte) { return byte != 0; }))
+            continue;
+
+        if (auto const byte = payload[offset]; wanted(byte))
+            return byte;
+    }
+
+    return std::nullopt;
+}
+
+/// Waits for one press and the release after it, at one byte of the report.
+///
+/// @param transport An open control interface.
+/// @param offset Which byte carries the bitmask.
+/// @param seconds How long to wait for the press.
+/// @return What was seen.
+[[nodiscard]] InputObservation awaitPress(HidApiTransport& transport, std::size_t offset,
+                                          int seconds)
+{
+    using Clock = std::chrono::steady_clock;
+
+    InputObservation seen;
+    auto const pressed =
+        awaitByte(transport, offset, [](std::uint8_t byte) { return byte != 0; },
+                  Clock::now() + std::chrono::seconds { seconds });
+    if (!pressed)
+        return seen;
+
+    seen.sawPress = true;
+    seen.raw = *pressed;
+
+    // Whether a release is reported at all is the question, not an assumption:
+    // the driver fires on a rising edge and returns early when the byte has not
+    // changed, so a deck that never sends the zero would lose every second press.
+    auto const started = Clock::now();
+    auto const released = awaitByte(transport, offset, [](std::uint8_t byte) { return byte == 0; },
+                                    started + std::chrono::seconds { seconds });
+    seen.sawRelease = released.has_value();
+    if (seen.sawRelease)
+        seen.releaseAfter =
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started);
+
+    return seen;
+}
+
+/// @param seen What one round observed.
+/// @return The raw byte for the summary's column, or a dash if nothing arrived.
+[[nodiscard]] std::string rawColumn(InputObservation const& seen)
+{
+    return seen.sawPress ? std::format("{:02x}", seen.raw) : std::string { "--" };
+}
+
+/// @param seen What one round observed.
+/// @return How many bits the byte carried, or a dash.
+[[nodiscard]] std::string bitsColumn(InputObservation const& seen)
+{
+    return seen.sawPress ? std::format("{}", std::popcount(seen.raw)) : std::string { "-" };
+}
+
+/// @param seen What one round observed.
+/// @param expected The bit the table claims that button or knob produces.
+/// @param table Which table, for the message.
+/// @return The summary's verdict column.
+[[nodiscard]] std::string verdictFor(InputObservation const& seen, std::uint8_t expected,
+                                     std::string_view table)
+{
+    if (!seen.sawPress)
+        return "nothing arrived";
+    if (seen.raw == expected)
+        return "agrees";
+
+    return std::format("DISAGREES with {}", table);
+}
+
+/// @param seen What one round observed.
+/// @return What to say about the release that followed the press.
+[[nodiscard]] std::string releaseNote(InputObservation const& seen)
+{
+    if (!seen.sawRelease)
+        return ", NO RELEASE REPORTED";
+
+    return std::format(", released after {} ms", seen.releaseAfter.count());
+}
+
+/// @param seen One round each, in the controls' own order.
+/// @return Whether every round produced a different single bit.
+///
+/// Two controls cannot share a bit, so a repeat is not a finding about the
+/// hardware: it means a round was answered with the wrong control. Telling those
+/// two apart is the difference between a measurement and a mis-press, and without
+/// this check the summary reports the second as the first.
+[[nodiscard]] bool everyRoundIsADistinctBit(std::span<InputObservation const> seen)
+{
+    std::vector<std::uint8_t> bits;
+    for (auto const& observation: seen)
+    {
+        if (!observation.sawPress || std::popcount(observation.raw) != 1)
+            return false;
+        if (std::ranges::find(bits, observation.raw) != bits.end())
+            return false;
+
+        bits.push_back(observation.raw);
+    }
+
+    return true;
+}
+
+/// @param agrees Whether every observed bit matched the table.
+/// @param usable Whether the walk that produced it can be read at all.
+/// @return What to say about the table.
+[[nodiscard]] std::string_view tableVerdict(bool agrees, bool usable)
+{
+    if (!usable)
+        return "was not measured -- the walk is not usable";
+
+    return agrees ? "agrees with the hardware" : "DISAGREES with the hardware";
+}
+
+/// Prints what the walk found, and whether the tables agree with it.
+///
+/// Separate from the walk that measured it, so neither has to be read while
+/// thinking about the other.
+///
+/// @param console Where it goes.
+/// @param walk What was measured.
+/// @return Whether both walks were usable, so a caller's status can say so too.
+[[nodiscard]] bool reportInputWalk(IConsole& console, InputWalk const& walk)
+{
+    writeLine(console, "");
+    writeLine(console, "{:>14}  {:>5}  {:>5}  {:>8}  {}", "button", "raw", "bit", "expected", "");
+
+    auto const buttonsUsable = walk.buttonsComplete && everyRoundIsADistinctBit(walk.buttons);
+    bool buttonsAgree = buttonsUsable;
+    for (auto const button: AllButtons)
+    {
+        auto const& seen = walk.buttons[indexOf(button)];
+        auto const expected = protocol::ButtonBits[indexOf(button)];
+        auto const agrees = seen.sawPress && seen.raw == expected;
+        buttonsAgree = buttonsAgree && agrees;
+
+        writeLine(console,
+                  "{:>14}  {:>5}  {:>5}  {:>8}  {}",
+                  nameOf(button),
+                  rawColumn(seen),
+                  bitsColumn(seen),
+                  std::format("{:02x}", expected),
+                  verdictFor(seen, expected, "ButtonBits"));
+    }
+
+    // The release half, which is about the driver rather than about the table.
+    for (auto const button: AllButtons)
+    {
+        auto const& seen = walk.buttons[indexOf(button)];
+        if (seen.sawPress && !seen.sawRelease)
+            writeLine(console,
+                      "  the {} button reported no release -- the driver's rising edge never "
+                      "re-arms, so a second press of it would be lost",
+                      nameOf(button));
+    }
+
+    if (walk.sawTogether)
+    {
+        auto const bits = std::popcount(walk.together);
+        writeLine(console, "");
+        writeLine(console,
+                  "two at once: raw {:02x}, {} bit(s) set -- {}",
+                  walk.together,
+                  bits,
+                  bits >= 2 ? "they OR into one report, which is what the bitmask reading assumes"
+                            : "ONLY ONE BIT: the report does not combine them, and the bitmask "
+                              "reading is wrong");
+    }
+
+    writeLine(console, "");
+    writeLine(console, "{:>14}  {:>5}  {:>8}  {}", "knob", "raw", "expected", "");
+
+    auto const knobsUsable = walk.knobsComplete && everyRoundIsADistinctBit(walk.knobs);
+    bool knobsAgree = knobsUsable;
+    for (auto const knob: AllKnobs)
+    {
+        auto const& seen = walk.knobs[indexOf(knob)];
+        auto const expected = protocol::KnobBits[indexOf(knob)];
+        auto const agrees = seen.sawPress && seen.raw == expected;
+        knobsAgree = knobsAgree && agrees;
+
+        writeLine(console,
+                  "{:>14}  {:>5}  {:>8}  {}",
+                  nameOf(knob),
+                  rawColumn(seen),
+                  std::format("{:02x}", expected),
+                  verdictFor(seen, expected, "KnobBits"));
+    }
+
+    writeLine(console, "");
+    writeLine(console,
+              "ButtonBits {}, KnobBits {}",
+              tableVerdict(buttonsAgree, buttonsUsable),
+              tableVerdict(knobsAgree, knobsUsable));
+
+    // The corrected tables, ready to paste, so nobody has to transcribe a byte
+    // out of the rows above.
+    if (!buttonsUsable)
+        writeLine(console,
+                  "  the button walk is not usable: a round went unanswered, or two rounds "
+                  "reported the same bit -- which two buttons cannot do, so one was answered "
+                  "with the wrong button. Run it again rather than reading the rows above.");
+    else if (!buttonsAgree)
+    {
+        std::string row;
+        for (auto const button: AllButtons)
+            row += std::format("0x{:02x}, ", walk.buttons[indexOf(button)].raw);
+        writeLine(console, "  ButtonBits should read: {{ {}}}", row);
+    }
+    if (!knobsUsable)
+        writeLine(console,
+                  "  the knob walk is not usable: not every knob was pushed, or two pushes "
+                  "carried the same bit -- run it again rather than reading the rows above.");
+    else if (!knobsAgree)
+    {
+        std::string row;
+        for (auto const knob: AllKnobs)
+            row += std::format("0x{:02x}, ", walk.knobs[indexOf(knob)].raw);
+        writeLine(console, "  KnobBits should read: {{ {}}}", row);
+    }
+
+    return buttonsUsable && knobsUsable;
+}
+
+/// Lights every button but one, so the one that is lit is the one to press.
+/// @param transport An open control interface.
+/// @param console Where a failed write is reported.
+/// @param only Which button to light, or nothing to light none of them.
+void lightOnly(HidApiTransport& transport, IConsole& console, std::optional<Button> only)
+{
+    auto const apply = [&transport, &console](Button button, bool wanted) {
+        // Off is literal black, not scaledChannel(..., 0): that returns
+        // MinLightChannel, because the vendor's brightness slider bottoms out at
+        // the floor rather than at nothing. Dimming to zero percent leaves four
+        // buttons faintly glowing, and the two with the highest channels still
+        // read as lit -- which is not a cue anybody can act on.
+        auto const& colour = protocol::DefaultButtonColours[indexOf(button)];
+        auto const level = protocol::DefaultButtonBrightnessPercent;
+        auto const record = protocol::buttonColourRecord(
+            protocol::selectorFor(button),
+            wanted ? protocol::scaledChannel(colour.red, level) : 0,
+            wanted ? protocol::scaledChannel(colour.green, level) : 0,
+            wanted ? protocol::scaledChannel(colour.blue, level) : 0,
+            wanted);
+
+        auto const framed =
+            protocol::frameFeatureReport(protocol::setPropertyAt(protocol::ButtonColourAddress, record));
+        if (!transport.sendFeatureReport(framed))
+            writeErrorLine(console, "could not light the {} button", nameOf(button));
+    };
+
+    // The lit one goes first and the dark ones after, so moving from one round to
+    // the next passes through two buttons lit rather than through none. Darkening
+    // first passes through all-four-dark instead, which is exactly the cue this
+    // walk uses for its next phase -- somebody watching the deck sees that flash
+    // between rounds and answers the wrong question. It cost three walks.
+    if (only)
+        apply(*only, true);
+
+    for (auto const button: AllButtons)
+        if (only != button)
+            apply(button, false);
+}
+
+/// Watches one window and takes the knob pushes in the order they arrive.
+///
+/// A round per knob would need the person at the deck to keep pace with rounds
+/// they cannot see, and a round that times out shifts every later one: read that
+/// way, four knobs look silent and the two bits that did arrive get attributed to
+/// the wrong knobs entirely. One window removes the pacing -- six pushes, left to
+/// right, at whatever speed suits, and the order they arrive in is the answer.
+///
+/// The knobs cannot be lit one at a time the way the buttons can, because the ring
+/// record colours all six at once. Their identity comes from the legend printed on
+/// the deck instead, which is why the order matters and the pacing must not.
+///
+/// @param transport An open control interface.
+/// @param seconds How long the whole window lasts.
+/// @return The distinct push bits, in the order they were first seen.
+[[nodiscard]] std::vector<std::uint8_t> collectKnobPushes(HidApiTransport& transport, int seconds)
+{
+    auto const deadline = std::chrono::steady_clock::now() + std::chrono::seconds { seconds };
+    std::vector<std::uint8_t> order;
+
+    while (order.size() < KnobCount)
+    {
+        // Waiting for a value not seen before is what lets the releases between
+        // pushes go by without being counted, and what stops a knob held a moment
+        // too long from filling two slots.
+        auto const pushed = awaitByte(
+            transport,
+            protocol::KnobPushOffset,
+            [&order](std::uint8_t value) {
+                return value != 0 && std::ranges::find(order, value) == order.end();
+            },
+            deadline);
+        if (!pushed)
+            break;
+
+        order.push_back(*pushed);
+    }
+
+    return order;
+}
+
+/// Lights all four buttons the way the driver leaves them.
+/// @param transport An open control interface.
+/// @param console Where a failed write is reported.
+void lightDefaults(HidApiTransport& transport, IConsole& console)
+{
+    for (auto const button: AllButtons)
+    {
+        auto const& colour = protocol::DefaultButtonColours[indexOf(button)];
+        auto const level = protocol::DefaultButtonBrightnessPercent;
+        static_cast<void>(setButtonColour(transport,
+                                          console,
+                                          button,
+                                          protocol::scaledChannel(colour.red, level),
+                                          protocol::scaledChannel(colour.green, level),
+                                          protocol::scaledChannel(colour.blue, level)));
+    }
+}
+
+/// Walks the inputs, asking for one press at a time and reporting what arrived.
+///
+/// The point of the walk is that **identity comes from which button is lit, not
+/// from ButtonBits**. Reading the arriving byte through isDown() would only show
+/// the table agreeing with itself, which is exactly what the existing decode test
+/// does and why the mapping is still open. So one button is lit, its raw byte is
+/// recorded, and the table is compared against that afterwards.
+///
+/// The knobs have no light of their own -- the ring record colours all six at
+/// once -- so their identity comes from the legend printed on the deck instead.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param seconds How long to wait for each press.
+/// @return Process status.
+int walkInputs(HidApiTransport& transport, IConsole& console, int seconds)
+{
+    using Clock = std::chrono::steady_clock;
+
+    // A deck that is asleep looks exactly like a deck nobody is touching, so the
+    // difference gets said out loud rather than blamed on the person at the desk.
+    writeLine(console, "waiting for the deck to send anything at all...");
+    if (!awaitByte(transport, protocol::EventTypeOffset, [](std::uint8_t) { return true; },
+                   Clock::now() + std::chrono::seconds { seconds }))
+    {
+        writeErrorLine(console,
+                       "nothing arrived. The deck sends no reports until something initialises "
+                       "it -- run `ax310_app --start-minimised` alongside this and try again.");
+        return EXIT_FAILURE;
+    }
+
+    InputWalk walk;
+
+    // The lights carry the script, so somebody at the deck can do this without
+    // the terminal in view -- which matters, because every prompt below competes
+    // with looking at the hardware.
+    writeLine(console, "");
+    writeLine(console, "The deck's own lights say what to do:");
+    writeLine(console, "  one button lit   -> press that button");
+    writeLine(console, "  all four dark    -> hold any two buttons together");
+    writeLine(console, "  all four lit     -> push each knob, left to right");
+    writeLine(console, "");
+    walk.buttonsComplete = true;
+    for (auto const button: AllButtons)
+    {
+        writeLine(console, "  press the lit button ({})...", nameOf(button));
+
+        // Retried rather than skipped. Advancing past a round nobody answered is
+        // what turns a slow start into a wrong table: the press lands during the
+        // next round and is credited to the next button.
+        //
+        // The lighting is inside the retry, not before it, because this tool is
+        // not the only thing writing to the deck -- a driver finishing its connect
+        // lights all four, and a round that opened before that would be asking for
+        // a button nobody can pick out.
+        InputObservation seen;
+        for (int attempt = 0; attempt < PressAttempts && !seen.sawPress; ++attempt)
+        {
+            lightOnly(transport, console, button);
+            seen = awaitPress(transport, protocol::ButtonsOffset, seconds);
+            if (!seen.sawPress)
+                writeLine(console, "    still waiting for the lit button...");
+        }
+
+        walk.buttons[indexOf(button)] = seen;
+        if (!seen.sawPress)
+        {
+            writeLine(console, "    nothing arrived, so the rest of the buttons are not asked for");
+            walk.buttonsComplete = false;
+            break;
+        }
+
+        writeLine(console, "    raw {:02x}{}", seen.raw, releaseNote(seen));
+    }
+
+    lightOnly(transport, console, std::nullopt);
+    writeLine(console, "");
+    writeLine(console, "Now hold any two buttons together...");
+    if (auto const both = awaitByte(transport, protocol::ButtonsOffset,
+                                    [](std::uint8_t byte) { return std::popcount(byte) >= 2; },
+                                    Clock::now() + std::chrono::seconds { seconds }))
+    {
+        walk.together = *both;
+        walk.sawTogether = true;
+        writeLine(console, "    raw {:02x}", *both);
+    }
+    else
+        writeLine(console, "    no report carried two bits");
+
+    // Drained, so the knob rounds do not open with the buttons still held.
+    auto const settled = awaitByte(transport, protocol::ButtonsOffset,
+                                   [](std::uint8_t byte) { return byte == 0; },
+                                   Clock::now() + std::chrono::seconds { seconds });
+    static_cast<void>(settled);
+
+    writeLine(console, "");
+    writeLine(console, "Now push each knob once, left to right, at whatever speed suits.");
+    lightDefaults(transport, console);
+
+    auto const pushes = collectKnobPushes(transport, seconds * KnobWindowRounds);
+    for (std::size_t index = 0; index < pushes.size(); ++index)
+        walk.knobs[index] = InputObservation { .raw = pushes[index], .sawPress = true };
+
+    walk.knobsComplete = pushes.size() == KnobCount;
+    writeLine(console, "    {} of {} knobs pushed", pushes.size(), KnobCount);
+
+    auto const usable = reportInputWalk(console, walk);
+
+    // Left as the driver leaves it, so the deck does not keep whatever the last
+    // round of the walk happened to light.
+    lightDefaults(transport, console);
+
+    // A walk nobody answered is a failed measurement rather than a result, and
+    // saying so in the status as well as in the summary is what keeps it from
+    // being read as one.
+    return usable ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
 int usage(IConsole& console, std::string_view program)
 {
     writeErrorLine(console, "usage: {} <command>", program);
@@ -1006,6 +1547,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --level <1|2> <knob> <00..14>  set one track's level in one mix (hex)");
     writeErrorLine(console, "  --meters [seconds]     watch the per-track meters, and report their peaks");
     writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
+    writeErrorLine(console, "  --inputs [seconds]     which bit each button and knob push produces, one at a time");
     writeErrorLine(console, "  --panel-off            blank the panel; touch it to wake it again");
     writeErrorLine(console, "  --panel-brightness <19..64>  set panel brightness, percent in hex");
     writeErrorLine(console, "  --identify                              firmware version and serial number");
@@ -1030,6 +1572,53 @@ int usage(IConsole& console, std::string_view program)
                      static_cast<std::uint8_t>(effect),
                      protocol::nameIn(protocol::FramedCommandNames, static_cast<std::uint8_t>(effect)));
     return EXIT_FAILURE;
+}
+
+/// Dispatches the commands that watch the deck instead of writing to it.
+///
+/// Grouped for the same reason runLightCommand below is: main is held under a
+/// cognitive-complexity cap, and three modes that differ only in a default
+/// duration do not each need their own block up there.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param arguments The whole command line.
+/// @return The process status, or nothing when this is not one of these commands.
+[[nodiscard]] std::optional<int> runWatchCommand(HidApiTransport& transport, IConsole& console,
+                                                 std::span<char* const> arguments)
+{
+    struct Watch
+    {
+        std::string_view command;
+        unsigned defaultSeconds;
+        int (*run)(HidApiTransport&, IConsole&, int);
+    };
+
+    constexpr std::array<Watch, 3> Watches { {
+        { .command = "--meters", .defaultSeconds = 10, .run = watchMeters },
+        { .command = "--touches", .defaultSeconds = 20, .run = watchTouches },
+        { .command = "--inputs", .defaultSeconds = 30, .run = walkInputs },
+    } };
+
+    if (arguments.size() > 3)
+        return std::nullopt;
+
+    for (auto const& watch: Watches)
+    {
+        if (std::string_view { arguments[1] } != watch.command)
+            continue;
+
+        auto const seconds = parseSeconds(arguments, watch.defaultSeconds);
+        if (!seconds)
+        {
+            writeErrorLine(console, "{} takes a number of seconds, 1 to 600", watch.command);
+            return EXIT_FAILURE;
+        }
+
+        return watch.run(transport, console, *seconds);
+    }
+
+    return std::nullopt;
 }
 
 /// Dispatches the three commands that drive lights.
@@ -1085,23 +1674,14 @@ int main(int argc, char* argv[])
     if (auto const status = runLightCommand(transport, console, arguments))
         return *status;
 
+    if (auto const status = runWatchCommand(transport, console, arguments))
+        return *status;
+
     if (command == "--panel-off" && argc == 2)
         return setPanel(transport, console, protocol::PanelOffLevel);
 
     if (command == "--panel-brightness" && argc == 3)
         return runPanelBrightness(transport, console, arguments);
-
-    if (command == "--touches" && argc <= 3)
-    {
-        auto const seconds = parseSeconds(arguments, 20);
-        if (!seconds)
-        {
-            writeErrorLine(console, "--touches takes a number of seconds, 1 to 600");
-            return EXIT_FAILURE;
-        }
-
-        return watchTouches(transport, console, *seconds);
-    }
 
     if (command == "--try" && argc >= 4 && argc <= 6)
     {
@@ -1115,18 +1695,6 @@ int main(int argc, char* argv[])
 
         return tryRegister(
             transport, console, asked->address, asked->value, asked->seconds, asked->fenced);
-    }
-
-    if (command == "--meters" && argc <= 3)
-    {
-        auto const seconds = parseSeconds(arguments, 10);
-        if (!seconds)
-        {
-            writeErrorLine(console, "--meters takes a number of seconds, 1 to 600");
-            return EXIT_FAILURE;
-        }
-
-        return watchMeters(transport, console, *seconds);
     }
 
     if (command == "--read" && argc == 4)

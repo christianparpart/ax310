@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+#pragma once
+
+namespace ax310::testing
+{
+
+/// Where this checkout's bundled typefaces are, as CMake knew it at configure
+/// time.
+///
+/// Generated rather than passed as a compile definition. A quoted definition
+/// reaches MSVC through a response file with its escaping intact, so the
+/// backslash lands in the source and is rejected; an unquoted one needs a
+/// stringifying macro, which the guidelines do not allow. A header has neither
+/// problem and needs no toolchain to agree about quoting.
+inline constexpr char const* BundledFontDir = "@AX310_BUNDLED_FONT_DIR@";
+
+} // namespace ax310::testing

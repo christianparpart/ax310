@@ -42,6 +42,7 @@ Item {
                 width: mixer.gaugeSize
                 label: modelData
                 accent: mixer.accent
+                otherAccent: Theme.mixColor(mixer.mix === 0 ? 1 : 0)
                 level: mixer.levels[mixer.mix][index]
                 meter: mixer.meters[index]
                 peak: mixer.peaks[index]

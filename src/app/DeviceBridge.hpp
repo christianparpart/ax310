@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 namespace ax310::app
@@ -69,6 +70,18 @@ class DeviceBridge final: public QObject, public IDeviceListener
     DeviceBridge& operator=(DeviceBridge const&) = delete;
     DeviceBridge(DeviceBridge&&) = delete;
     DeviceBridge& operator=(DeviceBridge&&) = delete;
+
+    /// What the effects chain should be put into after each connect.
+    ///
+    /// Set before start(), from whatever the interface remembered. The driver
+    /// applies it as part of connecting, which is the moment the state would
+    /// otherwise be inherited from whichever program touched the deck last.
+    ///
+    /// @param state The chain to restore.
+    void setEffectState(EffectState const& state);
+
+    /// @return The effects chain as it now stands, for storing.
+    [[nodiscard]] EffectState effectState() const;
 
     /// Starts the worker thread, which connects and then polls until stopped.
     /// Reconnection is part of that loop, so a deck plugged in later is picked
@@ -250,9 +263,29 @@ class DeviceBridge final: public QObject, public IDeviceListener
   private:
     void run();
 
-    /// Reads all twelve levels from the deck and announces them. Runs on the
-    /// worker thread as part of a connect.
-    void publishLevels();
+    /// Mirrors the driver's own state into this object and announces it.
+    ///
+    /// The driver reads the deck on connect and after a mix change; this is what
+    /// carries the answer into the interface, so the panel shows what the deck
+    /// said rather than what QML asked for. A level the deck has never given an
+    /// answer for is left alone rather than published as silence.
+    ///
+    /// Runs on the worker thread, and on the thread QML calls from -- both
+    /// touch _levels, which is why it is guarded.
+    void publishDeviceState();
+
+    /// Records one level in the interface's own copy.
+    ///
+    /// @param mix Which mix, as an ax310::MixId int.
+    /// @param knob Which track, as an ax310::KnobId int.
+    /// @param percent The level.
+    void rememberLevel(int mix, int knob, int percent);
+
+    /// Whether the levels want reading again, set when the mix changes.
+    ///
+    /// The re-read is a dozen USB round trips, so it belongs to the worker
+    /// rather than to the thread that has to draw the next frame.
+    std::atomic<bool> _levelsWantReading { false };
 
     // Held only when the production constructor made them; the injecting
     // constructor leaves all three empty and borrows instead.
@@ -276,16 +309,19 @@ class DeviceBridge final: public QObject, public IDeviceListener
     /// The levels as last written or last read from the deck, in percent.
     std::array<std::array<int, ax310::KnobCount>, ax310::MixCount> _levels {};
 
-    /// Which mix the interface is editing. Held here rather than read back
-    /// because the deck offers no way to ask.
-    ax310::MixId _mix = ax310::MixId::Creator;
+    /// Guards _levels, which the worker thread fills on a connect and the thread
+    /// QML calls from reads on every repaint.
+    mutable std::mutex _levelsMutex;
 
     /// Which page the panel is on, shared by every view of it.
     bool _panelShowsEffects = false;
 
-    /// The microphone's creator-mix level before monitoring was turned off, so
+    /// The microphone's creator-mix level as last seen non-zero, so
     /// turning it back on restores what was there.
-    int _monitorRestoreLevel = 100;
+    /// Half scale until the track has been seen at a level of its own, because
+    /// a deck whose microphone was silent before this ever ran has told us
+    /// nothing to put back and full scale is the wrong guess to make.
+    int _monitorRestoreLevel = 50;
 
     std::atomic<bool> _isRunning { false };
     std::thread _worker;

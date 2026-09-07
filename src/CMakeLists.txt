@@ -12,6 +12,8 @@ add_subdirectory(checks)
 add_library(ax310_gui STATIC
     app/DeviceBridge.cpp
     app/DeviceBridge.hpp
+    app/Settings.cpp
+    app/Settings.hpp
 )
 
 target_link_libraries(ax310_gui PUBLIC
@@ -99,12 +101,27 @@ endif()
 # machine with the deck on it is not available.
 if(AX310_BUILD_TESTS)
     add_executable(ax310_gui_test
+        app/DeviceBridge_test.cpp
         app/GuiRender_test.cpp
         app/GuiTestMain.cpp
+        app/Settings_test.cpp
     )
 
     target_link_libraries(ax310_gui_test PRIVATE ax310_gui Catch2::Catch2)
     target_include_directories(ax310_gui_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+    # Through a generated header rather than a compile definition: a path quoted
+    # on a command line has to survive whatever the toolchain does with quoting,
+    # and the native and cross MSVC drivers disagreed about it.
+    #
+    # Beside the target rather than inside a preset's branch. The test main
+    # includes it unconditionally, so a configuration that builds that file has
+    # to have it -- and TSan, which registers no CTest entries and so skips the
+    # block below, builds it too.
+    set(AX310_BUNDLED_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gui/fonts")
+    configure_file(app/BundledFonts.hpp.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/generated/BundledFonts.hpp" @ONLY)
+    target_include_directories(ax310_gui_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     set_target_properties(ax310_gui_test PROPERTIES AUTOMOC ON)
 
     # Built under every preset, but registered with CTest under all but TSan.
@@ -130,8 +147,6 @@ if(AX310_BUILD_TESTS)
         # no output and nothing naming Qt. It is ignored where it is not needed.
         # The fonts this project bundles, as a path the test binary can hand to
         # Qt on a platform whose font database is otherwise empty.
-        target_compile_definitions(ax310_gui_test PRIVATE
-            AX310_BUNDLED_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/gui/fonts")
 
         ax310_place_runtime_dlls(ax310_gui_test)
         catch_discover_tests(ax310_gui_test
@@ -165,14 +180,54 @@ if(AX310_BUILD_TESTS)
                  COMMAND "${CMAKE_COMMAND}" -E env python3
                          "${PROJECT_SOURCE_DIR}/scripts/check-comment-history.py")
 
-        # A second run of the same binary, against the real scene graph.
+        # Answering --help must cost nothing and touch nothing.
         #
-        # Everything above pins the software renderer, which is what lets it run
-        # on a machine with no screen and no driver -- and it also means those
-        # tests cannot see how the deck's frames are actually made, which is an
-        # unmapped window grabbed through the RHI. A component can draw perfectly
-        # under QPainter and not at all there; one did, and the panel went to the
-        # hardware with every ring missing while the whole suite was green.
+        # Qt's QCommandLineParser::process() prints the help and calls ::exit(),
+        # which never runs ~QGuiApplication -- and so never releases the platform
+        # theme the desktop environment loaded during construction. That turns the
+        # most harmless command the program has into a LeakSanitizer report. Under
+        # a sanitised preset this fails if process() comes back; elsewhere it still
+        # checks that --help answers with no display attached.
+        #
+        # The second half of the regex is about the deck rather than the leak: a
+        # question asked on the command line must not open the hardware, and the
+        # driver announces it by name when it does. That half can only fire on a
+        # machine with a deck attached, which is exactly where it matters.
+        #
+        # It is the exit code that carries the verdict, so this deliberately does
+        # not set PASS_REGULAR_EXPRESSION: that property makes CTest ignore the
+        # return code, which is the one thing here worth reading.
+        add_test(NAME "asking for help is not a leak" COMMAND ax310_app --help)
+        set_tests_properties("asking for help is not a leak" PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            FAIL_REGULAR_EXPRESSION "Sanitizer;Opened AX310")
+
+        # A command line this program will not run has to say so.
+        #
+        # Qt's parser collects anything that is not an option as a positional
+        # argument and reports nothing at all about it, so without the check this
+        # guards, `ax310_app garbage` opens the deck and starts a session without
+        # a word -- a misspelt option reaching the hardware. Both halves are
+        # checked here: the message, and the
+        # refusal. If the check regresses the binary starts the interface instead
+        # and never returns, which the timeout scores as the failure it is.
+        add_test(NAME "an argument that is not an option is refused, out loud"
+                 COMMAND ax310_app garbage)
+        set_tests_properties("an argument that is not an option is refused, out loud" PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 30
+            PASS_REGULAR_EXPRESSION "error: Unexpected argument 'garbage'."
+            FAIL_REGULAR_EXPRESSION "Sanitizer;Opened AX310")
+
+        # A second run of the same binary, against a real windowing system.
+        #
+        # Everything above runs offscreen, which is what lets it work on a machine
+        # with no screen -- and an offscreen window is not the thing the deck's
+        # panel is. That one is created on a real compositor and never mapped, and
+        # grabbing it repeatedly is where components have twice behaved
+        # differently: first drawing nothing after the first grab, then taking a
+        # new geometry and keeping an old colour. Both went to the hardware while
+        # the whole suite was green.
         #
         # It skips itself where there is no display, which includes CI. Leak
         # detection is off for it alone: it brings up the GL driver, Wayland and

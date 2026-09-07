@@ -8,8 +8,8 @@ import AX310.App
 /// The physical control is a knob inside an LED ring, so a vertical fader would
 /// misrepresent the instrument. Four concentric arcs, outermost first:
 ///
-///   - the **other mix**, thin and dim, so both mixes are readable per track
-///     without switching between them;
+///   - the **other mix**, thin and in that mix's own colour, so both mixes are
+///     readable per track without switching between them;
 ///   - the **active mix**, thick, in that mix's colour;
 ///   - the **live meter**, with a peak-hold tick that decays.
 ///
@@ -38,6 +38,13 @@ Item {
     /// The colour of the mix being edited.
     property color accent: Theme.creator
 
+    /// The colour of the mix that is not being edited.
+    ///
+    /// Its own colour rather than a dimmed accent: the outer arc exists so both
+    /// mixes are readable per track, and an arc in the colour of the mix it is
+    /// not showing says nothing a person can use.
+    property color otherAccent: Theme.audience
+
     /// What the deck prints under this knob.
     property string label: ""
 
@@ -60,12 +67,11 @@ Item {
 
     // Scale from the width alone.
     //
-    // This used to subtract the legend's measured height from the gauge's own
-    // height, which made the legend an input to the scale that sets the legend's
-    // pixel size. Qt calls that a binding loop, refuses to settle it, and leaves
-    // whichever value it happened to see first -- so the rings were sized by an
-    // accident of evaluation order and the log filled with one warning per
-    // gauge per repaint. Height now follows from the width instead of feeding
+    // Subtracting the legend's measured height from the gauge's own would make
+    // the legend an input to the scale that sets the legend's pixel size. Qt
+    // calls that a binding loop, refuses to settle it, and leaves whichever value
+    // it saw first -- rings sized by an accident of evaluation order, and one
+    // warning per gauge per repaint. Height follows from the width instead of
     // back into it.
     readonly property real _unit: width / _designDial
 
@@ -85,6 +91,10 @@ Item {
             // first grab and then nothing at all -- the panel went out with the
             // numerals and legends intact and every arc missing. GeometryRenderer
             // triangulates on the CPU and survives every grab.
+            //
+            // It is not enough on its own. Through the RHI these arcs also take a
+            // new geometry and keep their old colour, which is why main() pins
+            // the software scene graph for the whole application.
             preferredRendererType: Shape.GeometryRenderer
 
             // The other mix: present but quiet.
@@ -100,7 +110,11 @@ Item {
                 }
             }
             ShapePath {
-                strokeColor: Qt.alpha(gauge.accent, 0.30)
+                // Dim enough to stay a reference rather than a second reading:
+                // at full strength a warm hue on near-black out-shouts the arc
+                // beside it, and which mix you are in stops being legible from
+                // across a desk -- which is the one thing this screen has to say.
+                strokeColor: Qt.alpha(gauge.otherAccent, 0.32)
                 strokeWidth: 2.5 * gauge._unit
                 fillColor: "transparent"
                 capStyle: ShapePath.FlatCap
@@ -110,6 +124,7 @@ Item {
                     startAngle: gauge.arcStart
                     sweepAngle: gauge.arcSweep * gauge.otherLevel / 100
                 }
+                Behavior on strokeColor { ColorAnimation { duration: Theme.mixTransition } }
             }
 
             // The signal on this track.

@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "Settings.hpp"
+
+#include <ax310/Protocol.hpp>
+
+#include <QSettings>
+#include <QVariant>
+#include <QVariantList>
+
+#include <memory>
+#include <utility>
+
+namespace ax310::app
+{
+
+namespace
+{
+    /// Where the user's own settings live, when no explicit file was given.
+    constexpr auto Organisation = "ax310";
+    constexpr auto Application = "ax310";
+
+    /// @param path An explicit file, or empty for the user's own.
+    /// @return The store to read or write.
+    [[nodiscard]] std::unique_ptr<QSettings> openStore(QString const& path)
+    {
+        if (path.isEmpty())
+            return std::make_unique<QSettings>(
+                QSettings::IniFormat, QSettings::UserScope, Organisation, Application);
+
+        return std::make_unique<QSettings>(path, QSettings::IniFormat);
+    }
+
+    /// @param command One of protocol::EffectEnables.
+    /// @return Its key, named by the command's own number.
+    ///
+    /// The number rather than the name, so renaming an enumerator in this project
+    /// does not silently orphan somebody's stored setting.
+    ///
+    /// One group level and an underscore, not two group levels: an INI file has a
+    /// single level of section, and QSettings spells the second one as a literal
+    /// backslash inside the key. That is neither ASCII nor something another INI
+    /// parser reads back, and `\8` looks like an escape to anyone editing it.
+    [[nodiscard]] QString enabledKey(protocol::FramedCommand command)
+    {
+        return QStringLiteral("effects/enabled_%1")
+            .arg(std::to_underlying(command), 2, 16, QLatin1Char('0'));
+    }
+
+    /// @param command One of protocol::EffectEnables.
+    /// @return The key a file carrying the two-level spelling holds it under.
+    ///
+    /// Read, never written, so a stored effects chain survives the rename rather
+    /// than silently reverting to off.
+    [[nodiscard]] QString foldedEnabledKey(protocol::FramedCommand command)
+    {
+        return QStringLiteral("effects/enabled/%1")
+            .arg(std::to_underlying(command), 2, 16, QLatin1Char('0'));
+    }
+
+    /// @param parameter Which parameter.
+    /// @return Its key, named by the parameter's own number.
+    ///
+    /// One key each rather than a single positional list. A list has to be the
+    /// length this build expects or every value lands on the wrong parameter, and
+    /// it cannot say "this one was chosen and that one was not" -- which is the
+    /// distinction that keeps a stored file from re-imposing a whole effect
+    /// configuration nobody asked for.
+    [[nodiscard]] QString parameterKey(protocol::Parameter parameter)
+    {
+        return QStringLiteral("effects/parameter_%1").arg(std::to_underlying(parameter));
+    }
+
+    /// @param parameter Which parameter.
+    /// @return The key a file carrying the two-level spelling holds it under.
+    [[nodiscard]] QString foldedParameterKey(protocol::Parameter parameter)
+    {
+        return QStringLiteral("effects/parameter/%1").arg(std::to_underlying(parameter));
+    }
+
+    /// @param store Where to look.
+    /// @param key The key this build writes.
+    /// @param folded The key a file written under the two-level spelling holds.
+    /// @return Whichever of the two the store has, preferring @p key.
+    [[nodiscard]] QVariant storedValue(QSettings const& store, QString const& key, QString const& folded)
+    {
+        if (store.contains(key))
+            return store.value(key);
+
+        return store.contains(folded) ? store.value(folded) : QVariant {};
+    }
+
+    constexpr auto PanelFpsKey = "panel/framesPerSecond";
+} // namespace
+
+Settings::Settings(QString filePath): _filePath { std::move(filePath) }
+{
+}
+
+EffectState Settings::effects() const
+{
+    auto const store = openStore(_filePath);
+
+    EffectState state;
+    for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
+    {
+        auto const command = protocol::EffectEnables[index];
+        auto const value = storedValue(*store, enabledKey(command), foldedEnabledKey(command));
+        state.enabled[index] = value.toBool();
+    }
+
+    // Read one at a time, so a key this build does not know is skipped and a key
+    // it knows that nobody has written stays unset. A parameter nobody chose must
+    // arrive unset rather than as a default: the bodies the driver edits from are
+    // captured vendor payloads, and writing one back puts that effect's whole
+    // configuration on the deck.
+    for (auto const& info: protocol::Parameters)
+    {
+        auto const value =
+            storedValue(*store, parameterKey(info.id), foldedParameterKey(info.id));
+        if (value.isValid())
+            state.parameters[protocol::indexOf(info.id)] = value.toInt();
+    }
+
+    return state;
+}
+
+void Settings::setEffects(EffectState const& state)
+{
+    auto const store = openStore(_filePath);
+
+    for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
+    {
+        auto const command = protocol::EffectEnables[index];
+        store->setValue(enabledKey(command), state.enabled[index]);
+
+        // Taken out as it is replaced. Left in, the file would carry both
+        // spellings of every setting for exactly the people who already had one
+        // -- and the backslash keys this is here to be rid of would outlive it.
+        store->remove(foldedEnabledKey(command));
+    }
+
+    for (auto const& info: protocol::Parameters)
+    {
+        auto const& chosen = state.parameters[protocol::indexOf(info.id)];
+        if (chosen)
+        {
+            store->setValue(parameterKey(info.id), *chosen);
+            store->remove(foldedParameterKey(info.id));
+        }
+    }
+}
+
+int Settings::panelFps() const
+{
+    auto const store = openStore(_filePath);
+    return protocol::clampPanelFps(store->value(PanelFpsKey, protocol::DefaultPanelFps).toInt());
+}
+
+void Settings::setPanelFps(int fps)
+{
+    auto const store = openStore(_filePath);
+    store->setValue(PanelFpsKey, protocol::clampPanelFps(fps));
+}
+
+} // namespace ax310::app

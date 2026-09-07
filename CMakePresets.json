@@ -202,6 +202,42 @@
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
             }
+        },
+        {
+            "name": "cross-windows-base",
+            "hidden": true,
+            "inherits": "base",
+            "description": "Cross-compile to Windows x64 from Linux or macOS, against the MSVC toolchain and Windows SDK that msvc-wine downloads from Microsoft. Needs MSVC_CROSS_ROOT pointing at a checkout of https://github.com/christianparpart/msvc-cross for the toolchain files, and QT_ROOT_DIR pointing at a Windows Qt kit -- the same variable install-qt-action sets in CI. Conditioned off on Windows, where the cl-* and clangcl-* presets above apply.",
+            "condition": {
+                "type": "notEquals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "$env{QT_ROOT_DIR}",
+                "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+                "CMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE": "PRE_TEST"
+            }
+        },
+        {
+            "name": "cross-cl-release",
+            "displayName": "MSVC Release (cross-compiled, cl.exe under Wine)",
+            "description": "Microsoft's own cl.exe and link.exe, driven under Wine. The real compiler, so this is what to trust when the question is what MSVC does. Qt's moc.exe and rcc.exe are Windows binaries too and run the same way.",
+            "inherits": "cross-windows-base",
+            "toolchainFile": "$env{MSVC_CROSS_ROOT}/toolchains/msvc-wine-x64.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "cross-clangcl-release",
+            "displayName": "clang-cl Release (cross-compiled, native)",
+            "description": "clang-cl and lld-link running natively on the host against the same MSVC headers and import libraries, with Wine out of the compile path. Faster than cross-cl-release; prefer it for iteration.",
+            "inherits": "cross-windows-base",
+            "toolchainFile": "$env{MSVC_CROSS_ROOT}/toolchains/clang-cl-x64.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
         }
     ],
     "buildPresets": [
@@ -215,7 +251,10 @@
         { "name": "cl-debug",         "configurePreset": "cl-debug" },
         { "name": "cl-release",       "configurePreset": "cl-release" },
         { "name": "clangcl-debug",    "configurePreset": "clangcl-debug" },
-        { "name": "clangcl-release",  "configurePreset": "clangcl-release" }
+        { "name": "clangcl-release",  "configurePreset": "clangcl-release" },
+
+        { "name": "cross-cl-release",      "configurePreset": "cross-cl-release" },
+        { "name": "cross-clangcl-release", "configurePreset": "cross-clangcl-release" }
     ],
     "testPresets": [
         { "name": "clang-debug",      "configurePreset": "clang-debug",      "output": { "outputOnFailure": true } },
@@ -228,6 +267,25 @@
         { "name": "cl-debug",         "configurePreset": "cl-debug",         "output": { "outputOnFailure": true } },
         { "name": "cl-release",       "configurePreset": "cl-release",       "output": { "outputOnFailure": true } },
         { "name": "clangcl-debug",    "configurePreset": "clangcl-debug",    "output": { "outputOnFailure": true } },
-        { "name": "clangcl-release",  "configurePreset": "clangcl-release",  "output": { "outputOnFailure": true } }
+        { "name": "clangcl-release",  "configurePreset": "clangcl-release",  "output": { "outputOnFailure": true } },
+
+        {
+            "name": "cross-cl-release",
+            "configurePreset": "cross-cl-release",
+            "output": { "outputOnFailure": true },
+            "environment": {
+                "WINEPATH": "$env{QT_ROOT_DIR}/bin",
+                "QT_QPA_PLATFORM": "offscreen"
+            }
+        },
+        {
+            "name": "cross-clangcl-release",
+            "configurePreset": "cross-clangcl-release",
+            "output": { "outputOnFailure": true },
+            "environment": {
+                "WINEPATH": "$env{QT_ROOT_DIR}/bin",
+                "QT_QPA_PLATFORM": "offscreen"
+            }
+        }
     ]
 }

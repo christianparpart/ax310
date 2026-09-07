@@ -76,6 +76,16 @@ DeviceBridge::~DeviceBridge()
     stop();
 }
 
+void DeviceBridge::setEffectState(EffectState const& state)
+{
+    _device.setEffectState(state);
+}
+
+EffectState DeviceBridge::effectState() const
+{
+    return _device.effectState();
+}
+
 void DeviceBridge::start()
 {
     if (_isRunning.exchange(true))
@@ -127,10 +137,23 @@ void DeviceBridge::run()
                 continue;
             }
 
-            // Read on this thread, not the GUI's: it is twelve USB round trips,
-            // and it belongs to the connect rather than to whoever asks first.
-            publishLevels();
+            // Published on this thread, not the GUI's: connect() has just spent
+            // twelve USB round trips reading these, and they belong to the
+            // connect rather than to whoever asks first.
+            _levelsWantReading.store(false);
+            publishDeviceState();
             continue;
+        }
+
+        if (_levelsWantReading.exchange(false))
+        {
+            if (auto const read = _device.readLevels(); !read)
+                logTo(_logger,
+                      LogLevel::Warning,
+                      "could not re-read the levels: {}",
+                      describe(read.error()));
+
+            publishDeviceState();
         }
 
         ++polls;
@@ -148,25 +171,37 @@ void DeviceBridge::setKnobLedBrightness(int percent)
         logTo(_logger, LogLevel::Warning, "setKnobLedBrightness failed: {}", describe(result.error()));
 }
 
-void DeviceBridge::publishLevels()
+void DeviceBridge::publishDeviceState()
 {
+    // Read from the driver rather than from the wire: it went to the deck for
+    // these when it connected, and asking twice would only invite the two
+    // answers to differ.
+    emit mixChanged(selectedMix());
+
     for (auto const mix: AllMixes)
     {
         for (auto const knob: AllKnobs)
         {
+            // A level the deck never answered for is left where it was. Drawing
+            // a track at silence because a read failed says something false
+            // about the hardware, and says it as confidently as a real reading.
             auto const level = _device.level(mix, knob);
             if (!level)
             {
                 logTo(_logger,
                       LogLevel::Debug,
-                      "could not read the {} level for {}: {}",
+                      "the deck has not said what the {} mix's {} level is",
                       nameOf(mix),
-                      nameOf(knob),
-                      describe(level.error()));
+                      nameOf(knob));
                 continue;
             }
 
-            _levels[indexOf(mix)][indexOf(knob)] = level->asPercent();
+            // Through rememberLevel like every other route, so what the deck
+            // says the microphone is at counts as a level it has been seen at.
+            rememberLevel(static_cast<int>(indexOf(mix)),
+                          static_cast<int>(indexOf(knob)),
+                          level->asPercent());
+
             emit levelChanged(static_cast<int>(indexOf(mix)),
                               static_cast<int>(indexOf(knob)),
                               level->asPercent());
@@ -256,7 +291,7 @@ void DeviceBridge::setLevel(int mix, int knob, int percent)
         return;
     }
 
-    _levels[static_cast<std::size_t>(mix)][static_cast<std::size_t>(knob)] = level.asPercent();
+    rememberLevel(mix, knob, level.asPercent());
     emit levelChanged(mix, knob, level.asPercent());
 }
 
@@ -275,8 +310,31 @@ void DeviceBridge::selectMix(int mix)
         return;
     }
 
-    _mix = chosen;
-    emit mixChanged(mix);
+    // The levels want reading back rather than assuming: the rings now display
+    // the other mix's row, and what that row holds is the deck's to say. Asked
+    // for here and done by the worker, because it is a dozen USB round trips and
+    // this is the thread that has to draw the next frame.
+    _levelsWantReading.store(true);
+
+    // The mix itself is published now. The five writes it took have already been
+    // made, so the panel is repainting to something the deck has been told.
+    publishDeviceState();
+}
+
+void DeviceBridge::rememberLevel(int mix, int knob, int percent)
+{
+    std::lock_guard<std::mutex> const lock { _levelsMutex };
+    _levels[static_cast<std::size_t>(mix)][static_cast<std::size_t>(knob)] = percent;
+
+    // What monitoring is restored to is any level this track has been seen at,
+    // not only one that setMicMonitor itself silenced. The Mute mic tile, a knob
+    // turned down to nothing and a push of that knob all reach zero by their own
+    // route, and after any of them a restore had nothing recorded and went to
+    // full scale -- louder than the person had it, which is the wrong way to be
+    // wrong, and a push of a physical knob is an easy accident.
+    if (percent > 0 && std::cmp_equal(mix, indexOf(MixId::Creator))
+        && std::cmp_equal(knob, indexOf(KnobId::Mic)))
+        _monitorRestoreLevel = percent;
 }
 
 int DeviceBridge::levelPercent(int mix, int knob) const
@@ -285,12 +343,13 @@ int DeviceBridge::levelPercent(int mix, int knob) const
         || std::cmp_greater_equal(knob, KnobCount))
         return 0;
 
+    std::lock_guard<std::mutex> const lock { _levelsMutex };
     return _levels[static_cast<std::size_t>(mix)][static_cast<std::size_t>(knob)];
 }
 
 int DeviceBridge::selectedMix() const noexcept
 {
-    return static_cast<int>(indexOf(_mix));
+    return static_cast<int>(indexOf(_device.selectedMix()));
 }
 
 bool DeviceBridge::micMonitor() const
@@ -304,19 +363,24 @@ void DeviceBridge::setMicMonitor(bool enabled)
 {
     auto const creatorMix = static_cast<int>(indexOf(MixId::Creator));
     auto const micTrack = static_cast<int>(indexOf(KnobId::Mic));
-    auto const current = levelPercent(creatorMix, micTrack);
-
     if (!enabled)
     {
-        // Remember what is being silenced. Restoring to full instead would be
-        // louder than what the person had, which is the wrong way to be wrong.
-        if (current > 0)
-            _monitorRestoreLevel = current;
         setLevel(creatorMix, micTrack, 0);
         return;
     }
 
-    setLevel(creatorMix, micTrack, _monitorRestoreLevel > 0 ? _monitorRestoreLevel : 100);
+    // rememberLevel keeps the last level this track was actually seen at, so
+    // there is nothing to record here -- only something to put back.
+    //
+    // Read and the lock let go before the write, which takes it again on the way
+    // through rememberLevel.
+    int restore = 0;
+    {
+        std::lock_guard<std::mutex> const lock { _levelsMutex };
+        restore = _monitorRestoreLevel;
+    }
+
+    setLevel(creatorMix, micTrack, restore);
 }
 
 bool DeviceBridge::panelShowsEffects() const noexcept
@@ -430,7 +494,7 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
     // event that was never decoded in the first place.
     std::visit(Overloaded {
                    [this](ButtonPressed const& e) {
-                       logTo(_logger, LogLevel::Debug, "event: button {}", indexOf(e.button));
+                       logTo(_logger, LogLevel::Debug, "event: button {}", nameOf(e.button));
                    },
                    [this](KnobPushed const& e) {
                        logTo(_logger, LogLevel::Debug, "event: knob {} pushed", indexOf(e.knob));
@@ -443,20 +507,26 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
                              e.touch == Touch::Touched);
                    },
                    [this](KnobVolumeChanged const& e) {
-                       logTo(_logger, LogLevel::Debug, "event: knob {} volume={}", indexOf(e.knob), e.volume);
+                       logTo(_logger,
+                             LogLevel::Debug,
+                             "event: knob {} volume={} in the {} mix",
+                             indexOf(e.knob),
+                             e.volume,
+                             nameOf(e.mix));
                    },
                    [this](ScreenTouched const& e) {
                        logTo(_logger, LogLevel::Debug, "event: screen {},{}", e.x, e.y);
                    },
                    [this](AudioMetersChanged const& e) {
-                       logTo(_logger,
-                             LogLevel::Debug,
-                             // Named by position, because what they measure is
-                             // not settled -- and indexed against the array's
-                             // actual extent, which is two and has been six.
-                             "event: meters {} {}",
-                             e.levels[0],
-                             e.levels[1]);
+                       // All of them, by track. Two of six answered no question
+                       // anybody asks of a meter, and this event is already
+                       // deduplicated in the driver, so it costs one line per
+                       // reading that actually changed rather than one per report.
+                       std::string reading;
+                       for (auto const knob: AllKnobs)
+                           reading += std::format(" {}={}", nameOf(knob), e.levels[indexOf(knob)]);
+
+                       logTo(_logger, LogLevel::Debug, "event: meters{}", reading);
                    },
                    [this](ConnectionChanged const& e) {
                        logTo(_logger, LogLevel::Info, "connection state {}", static_cast<int>(e.state));
@@ -468,19 +538,31 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
     // into DeviceEvent without being handled here.
     std::visit(Overloaded {
                    [this](ButtonPressed const& e) { emit buttonPressed(e.button); },
-                   [this](KnobPushed const& e) { emit knobPushed(e.knob); },
+                   [this](KnobPushed const& e) {
+                       // Pushing the microphone's knob toggles monitoring, which
+                       // is what the Monitor tile does -- through the same call,
+                       // so the deck and the panel cannot end up with two answers
+                       // to one question.
+                       //
+                       // Here rather than in QML because three MixerViews exist
+                       // at once -- the panel, the desktop mixer, and the
+                       // desktop's preview of the panel -- so a handler over
+                       // there would toggle monitoring three times per push.
+                       if (e.knob == KnobId::Mic)
+                           setMicMonitor(!micMonitor());
+
+                       emit knobPushed(e.knob);
+                   },
                    [this](KnobTouched const& e) { emit knobTouched(e.knob, e.touch); },
                    [this](KnobVolumeChanged const& e) {
-                       // Turning a knob has to be applied by the host: the deck
-                       // reports the turn as a relative counter and changes
-                       // nothing itself. Without this the knobs move, the numbers
-                       // move, and the audio does not.
-                       //
-                       // It belongs here rather than in QML because three
-                       // MixerViews exist at once -- the panel, the desktop
-                       // mixer, and the desktop's preview of the panel -- and
-                       // each would issue its own write.
-                       setLevel(selectedMix(), static_cast<int>(indexOf(e.knob)), e.volume);
+                       // The driver has already written this to the deck, and it
+                       // says which mix it wrote to -- so there is nothing to
+                       // decide here and nothing to guess. Mirrored into the
+                       // interface's copy and announced.
+                       auto const mix = static_cast<int>(indexOf(e.mix));
+                       auto const knob = static_cast<int>(indexOf(e.knob));
+                       rememberLevel(mix, knob, e.volume);
+                       emit levelChanged(mix, knob, e.volume);
                        emit knobVolumeChanged(e.knob, e.volume);
                    },
                    [this](ScreenTouched const& e) { emit screenTouched(e.x, e.y, e.phase); },

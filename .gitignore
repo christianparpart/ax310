@@ -13,6 +13,11 @@ compile_commands.json
 # One-action USB captures produced by scripts/capture_action.py.
 captures/
 
+# Notes about the machine this is developed on rather than about the project:
+# which hardware is attached, how the desktop is set up, what the local
+# toolchain does. AGENT.md reads it when it is there.
+/AGENT.local.md
+
 # Python bytecode.
 __pycache__/
 

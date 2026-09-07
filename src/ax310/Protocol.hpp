@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -319,20 +320,26 @@ struct FirmwareVersion
 ///     to each primary in turn: `ff 00 00`, `00 ff 00`, `00 00 ff`.
 ///   * **byte 8 lights the button**: `0x1f` on, `0x00` off. "Off" writes black
 ///     *and* clears this, so it is not merely a colour of zero.
-///   * **bytes 6 and 7 are not understood, and are not part of the colour.** Two
-///     records with the same button and the same colour, captured minutes apart,
-///     differ in them -- so they are not a checksum of this record and not
-///     derived from its contents. They carry something outside it.
+///   * **bytes 6 and 7 are not understood, and they are not inert.** Two records
+///     with the same button and the same colour, captured minutes apart, differ
+///     in them, so they are not a checksum of this record and not derived from
+///     its contents. They are not passive either: on the hardware, the same
+///     selector carrying the same colour `00 37 ff` lights the button with `00
+///     1d` in that pair and leaves it dark with `f9 3d`, while `ff 00 00` lights
+///     under both. So the pair decides whether a given colour shows at all.
+///     `0xf9` there sits beside the `0xf8` a knob record carries in byte 6 and
+///     the `0xf8` a surround record carries in byte 4; whether those are one
+///     field is untested, and none of the three is explained.
 ///
 /// There is no brightness field. The vendor scales the colour host-side and sends
 /// the result: its slider at minimum sent `0x19` on the lit channel and at
 /// maximum `0xff`. `0x19` is 25, the same floor its panel-brightness slider uses.
 ///
-/// Which selector is which physical button is only half known: `0x3c` is the one
-/// the vendor's grid calls top-left and `0x3e` the one it calls bottom-right.
-/// `0x3d` and `0x3f` have not been assigned, and the deck's own physical order has
-/// never been verified either -- ButtonBits runs `0x08, 0x04, 0x02, 0x01`, which
-/// is reversed for no reason anybody has recorded.
+/// Which selector is which physical button is settled, by driving all four at once
+/// to four colours nobody could confuse and reading the deck: see
+/// ButtonColourSelectors. The input direction is settled too, and by this one --
+/// lighting a single button is what identifies the press that follows it. See
+/// ButtonBits.
 inline constexpr std::uint8_t ButtonColourAddress = 0xc0;
 
 /// Which selector addresses which button, indexed by Button.
@@ -346,12 +353,15 @@ inline constexpr std::uint8_t ButtonColourAddress = 0xc0;
 /// which is clockwise, where Button is row-major. `FirstButtonSelector + index`
 /// would light the wrong two, so the mapping is a table.
 ///
-/// A caveat worth keeping: these are the positions the *vendor's* grid gives them.
-/// Whether Button's own enumerators match the deck's physical layout has never
-/// been verified -- ButtonBits runs 0x08, 0x04, 0x02, 0x01, reversed for no
-/// recorded reason -- so this maps a vendor label to a selector, and the last link
-/// to a physical button is still assumed. Pressing each button and watching which
-/// bit arrives would close it.
+/// Confirmed against the deck rather than inferred from the vendor's labels: all
+/// four were driven in one pass to red, green, blue and yellow, and each colour
+/// appeared under the button this table names. One pass rather than four, so the
+/// answer cannot be an artefact of writes landing in the wrong order.
+///
+/// This settles the output direction, and it is what settled the input direction
+/// as well: `ax310_probe --inputs` lights one button at a time and reads the byte
+/// that arrives, so the press is identified by the light rather than by the table
+/// being checked. See ButtonBits.
 inline constexpr std::array<std::uint8_t, ButtonCount> ButtonColourSelectors {
     0x3c, // TopLeft
     0x3d, // TopRight
@@ -401,6 +411,39 @@ inline constexpr std::uint8_t ButtonDark = 0x00;
              0x80 };
 }
 
+/// One light's colour, at full brightness. Buttons and knob rings alike.
+struct LightColour
+{
+    std::uint8_t red {};
+    std::uint8_t green {};
+    std::uint8_t blue {};
+};
+
+/// How brightly the function buttons come up when nothing has chosen otherwise.
+///
+/// Picked at the deck rather than derived: every channel at full is glaring on a
+/// desk, and the hardware's floor of MinLightChannel is hard to see in a lit
+/// room. One number, so there is one thing to change.
+inline constexpr int DefaultButtonBrightnessPercent = 75;
+
+/// What the four buttons are lit with when nothing has chosen otherwise, indexed
+/// by Button and stated at full brightness -- scaledChannel applies the level.
+///
+/// One warm family rather than four unrelated hues, so the row reads as part of
+/// the same instrument. They are spread as far apart within it as warm colours
+/// allow, because they have to be told apart at a glance and a narrower spread
+/// was tried on the hardware first: an amber and a gold two steps apart were one
+/// light to the eye.
+inline constexpr std::array<LightColour, ButtonCount> DefaultButtonColours {
+    LightColour { .red = 0xff, .green = 0x7a, .blue = 0x00 }, // TopLeft, amber
+    LightColour { .red = 0xff, .green = 0x60, .blue = 0x50 }, // TopRight, coral
+    LightColour { .red = 0xff, .green = 0xe0, .blue = 0x1a }, // BottomLeft, gold
+    LightColour { .red = 0xc0, .green = 0x18, .blue = 0x20 }, // BottomRight, deep red
+};
+// Indexed by Button and tied to ButtonCount, so a button without a colour will
+// not compile. Which colour suits which button is a matter of taste and nothing
+// can check it; that all four differ is checked in the tests.
+
 /// The knob rings take one colour for all six, at the button address.
 ///
 /// The same `0xc0` the buttons use, with byte 0 selecting which bank of lights the
@@ -435,6 +478,34 @@ inline constexpr std::uint8_t KnobLightCount = 0x0a;
     return { KnobBank, KnobFirstLight, KnobLightCount, red, green, blue,
              0xf8,     0x00,           ButtonLit,      0x80 };
 }
+
+/// What the knob rings are lit with in each mix, indexed by MixId.
+///
+/// The rings are how the deck itself says which mix is live: blue for the creator
+/// mix, orange for the audience mix. Both values are the vendor's, and they are
+/// where the interface's own creator and audience colours come from -- so the
+/// window and the hardware say the same thing in the same language.
+///
+/// These have to be written on every switch, and written *after* it. The ring
+/// record carries no mix at all, so the deck colours whichever mix is selected
+/// when the record arrives: a switch that does not write the new mix's colour
+/// leaves the rings showing the old one's, and one that writes it before
+/// selecting paints the mix being left instead. See Device::selectMix.
+inline constexpr std::array<LightColour, MixCount> MixRingColours {
+    LightColour { .red = 0x00, .green = 0x7d, .blue = 0xff }, // Creator, blue
+    LightColour { .red = 0xff, .green = 0x7d, .blue = 0x00 }, // Audience, orange
+};
+
+/// What Property::KnobLedSelect carries for each mix, indexed by MixId.
+///
+/// Captured from three of the vendor's actions, which together read this address
+/// as carrying the mixer mode and the monitored mix in one byte: `0x80` a single
+/// creator mix, `0x01` a single audience mix, `0x00` Dual Mix. The init sequence
+/// writes `0x80`, which is why a freshly attached deck monitors the creator mix.
+///
+/// Writing SelectedMix alone moves the audio and leaves the rings behind; this is
+/// the half that moves them.
+inline constexpr std::array<std::uint8_t, MixCount> KnobLedSelectForMix { 0x80, 0x01 };
 
 /// Where the surround light strip is configured.
 ///
@@ -668,14 +739,19 @@ enum class Property : std::uint8_t
     /// The deck's own meters cannot show this because they are pre-fader.
     CreatorMixLevels = 0x27,
 
-    /// Which knobs light at all. Init writes 0x80; writing 0x10 leaves only the
-    /// first knob's ring lit, so it selects rather than scales. The encoding is
-    /// not worked out -- a six-knob mask would not be 0x80.
+    /// Which knobs light at all, and which mix their rings display. Init writes
+    /// 0x80; writing 0x10 leaves only the first knob's ring lit, so it selects
+    /// rather than scales. The encoding is not worked out -- a six-knob mask would
+    /// not be 0x80.
     ///
-    /// It also tracks the mixer mode, which the ring-selection reading does not
-    /// explain: the vendor software writes 0x80 for Single Mix, 0x00 for Dual Mix
-    /// and 0x01 when switching to the audience mix, always alongside 0x22. So
-    /// either the name is too narrow or this address carries two things.
+    /// The name is too narrow, and the second meaning is the load-bearing one. The
+    /// vendor writes 0x80 for a single creator mix, 0x01 for a single audience
+    /// mix, and 0x00 for Dual Mix, always alongside 0x22. Confirmed on the
+    /// hardware: writing 0x80 or 0x01 here is what moves the levels the rings
+    /// display, and SelectedMix on its own does not. See KnobLedSelectForMix.
+    ///
+    /// 0x22 is written by the vendor beside it and its meaning is unrecorded. This
+    /// driver does not write it, and the rings follow the mix without it.
     KnobLedSelect = 0x21,
 
     /// What the Line Out socket carries: see LineOutSource.
@@ -757,8 +833,14 @@ enum class Property : std::uint8_t
     ///
     /// Switching creator to audience writes `0x01` here, and the init sequence
     /// writes `0x00` -- so a deck this driver attaches to is left monitoring the
-    /// creator mix. Only that one direction has been captured; the write for
-    /// audience back to creator is inferred, not seen.
+    /// creator mix. Only that one direction was captured; the write for audience
+    /// back to creator is inferred, and both directions are confirmed on the
+    /// hardware through Device::selectMix.
+    ///
+    /// **This address alone moves the audio and nothing else.** The knob rings
+    /// keep the colour and the levels of the mix that was on before, which looks
+    /// exactly like a switch that did not happen. KnobLedSelect and a ring-colour
+    /// record are the other two thirds of a switch; see MixRingColours.
     SelectedMix = 0x15,
 
     // The per-track levels live in two contiguous six-byte blocks, one per mix,
@@ -786,6 +868,17 @@ enum class Property : std::uint8_t
     /// deck with its own compressor, and an ear cannot tell the two apart.
     MicGain = 0x1f,
 
+    /// The microphone's level, written alongside CreatorMixLevels.
+    ///
+    /// The Mic is the one track that takes two writes. Dragging the vendor's Mic
+    /// slider produces this and `0x27` in pairs carrying the same value, every
+    /// time, and no other track does anything of the kind -- which is why
+    /// Device::setLevel writes it for KnobId::Mic in the creator mix and for
+    /// nothing else. What the second register is *for* is not established; that
+    /// the vendor writes it is.
+    ///
+    /// It is a single register, and the pairing has only ever been captured
+    /// against the creator block, so the audience mix's Mic does not get it.
     KnobPropertyAt35 = 0x35,
 };
 
@@ -1353,6 +1446,38 @@ inline constexpr auto PropertyNames = std::to_array<WireName<Property>>({
 // lookup stops at the first match and both would name something plausible.
 
 
+/// How often the deck's panel may be redrawn, in frames per second.
+///
+/// Capped rather than merely defaulted. Every frame is an 800x480 image encoded
+/// to JPEG on the host and pushed over USB in chunks, so a number typed by
+/// somebody who does not know that costs a core and a share of the bus for no
+/// visible gain -- the panel cannot show more than the ceiling here. The floor is
+/// where the interface stops being usable rather than where it stops being cheap.
+///
+/// Configuration passes through clampPanelFps, so no stored value can exceed it.
+inline constexpr int MinPanelFps = 1;
+inline constexpr int MaxPanelFps = 60;
+inline constexpr int DefaultPanelFps = 30;
+
+/// @param fps A frame rate somebody asked for.
+/// @return That rate, brought inside what this driver will send.
+[[nodiscard]] constexpr int clampPanelFps(int fps) noexcept
+{
+    return std::clamp(fps, MinPanelFps, MaxPanelFps);
+}
+
+/// Every framed command that switches an effect on or off.
+///
+/// A table rather than five calls at the one call site, so switching the chain
+/// off is a loop and a newly identified enable is one row. The noise gate is
+/// absent because no enable has been found for it -- its parameter blocks are all
+/// that has ever been captured.
+inline constexpr std::array<FramedCommand, 5> EffectEnables {
+    FramedCommand::DelayEffectEnable, FramedCommand::CompressorEnable,
+    FramedCommand::EqualiserEnableA,  FramedCommand::EqualiserEnableB,
+    FramedCommand::EqualiserEnableC,
+};
+
 /// Names for the framed commands that have one.
 inline constexpr auto FramedCommandNames = std::to_array<WireName<FramedCommand>>({
     { .value = FramedCommand::DelayEffectEnable, .name = "DelayEffectEnable (reverb/echo)" },
@@ -1576,10 +1701,17 @@ inline constexpr int AudioLevelFullScale = 0x7fff;
 }
 
 /// @param raw A meter reading against AudioLevelFullScale.
-/// @return It as a percentage of full scale.
+/// @return It as a percentage of full scale, 0 to 100.
+///
+/// Clamped, because the two scales do not match: a meter word is sixteen bits and
+/// reaches 0xffff, while full scale is 0x7fff, so the top half of the range
+/// converts to between 100 and 199. Nothing downstream clamped either, and a ring
+/// gauge drawing 199% of a 270-degree sweep is a complete circle in the clipping
+/// colour -- which is what the deck's panel showed for a microphone that was
+/// reading 2%.
 [[nodiscard]] constexpr int toPercent(int raw) noexcept
 {
-    return (raw * 100) / AudioLevelFullScale;
+    return std::clamp((raw * 100) / AudioLevelFullScale, 0, 100);
 }
 
 /// @param low The less significant byte.
@@ -1597,10 +1729,49 @@ inline constexpr std::size_t KnobLedLevelOffset = 4;
 inline constexpr int MaxKnobLedLevel = 20;
 
 /// Bit representing each Button in PhysicalButtonEvent::buttons, indexed by Button.
+///
+/// Confirmed against the deck with `ax310_probe --inputs`, which lights one button
+/// at a time and reads the byte that arrives -- so the identity comes from the
+/// light rather than from this table. The order runs backwards against the enum's,
+/// and that is simply what the hardware does.
+///
+/// Two buttons held together arrive as one report with both bits set: `0x09` for
+/// top-left and bottom-right. And a release is reported, roughly 300 ms after the
+/// press, which is what lets Device::dispatchEvent's rising edge re-arm.
 inline constexpr std::array<std::uint8_t, ButtonCount> ButtonBits { 0x08, 0x04, 0x02, 0x01 };
 
 /// Bit representing each knob in InputReport::knobPush and ::knobTouch, indexed by KnobId.
+///
+/// Confirmed by the same walk. The knobs cannot be lit one at a time -- the ring
+/// record colours all six at once -- so their identity comes from the legend
+/// printed on the deck, and the walk takes the pushes in the order they arrive
+/// rather than asking for one per round.
 inline constexpr std::array<std::uint8_t, KnobCount> KnobBits { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20 };
+
+/// Every control's bit is its own, and every one is a single bit.
+///
+/// The masks are how a report is read apart, so a duplicate or a two-bit row would
+/// make one control answer for another silently. It is also what the hardware says:
+/// four buttons and six knobs each produced a different single bit.
+/// @param bits A table of bitmasks.
+/// @return Whether every row is a distinct single bit.
+template <std::size_t N>
+[[nodiscard]] consteval bool everyRowIsOneOwnBit(std::array<std::uint8_t, N> const& bits)
+{
+    for (std::size_t row = 0; row < N; ++row)
+    {
+        if (std::popcount(bits[row]) != 1)
+            return false;
+        for (std::size_t other = row + 1; other < N; ++other)
+            if (bits[row] == bits[other])
+                return false;
+    }
+
+    return true;
+}
+
+static_assert(everyRowIsOneOwnBit(ButtonBits), "two buttons cannot share a bit");
+static_assert(everyRowIsOneOwnBit(KnobBits), "two knobs cannot share a bit");
 
 /// Mask covering the four physical buttons, derived from the table above rather
 /// than written out, so a fifth button is one more row and nothing else.

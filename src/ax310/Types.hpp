@@ -36,6 +36,21 @@ inline constexpr std::size_t ButtonCount = enumerators::denseEnumeratorCount<But
 /// Every Button, in enumerator order, for iterating without an index loop.
 inline constexpr auto AllButtons = enumerators::denseEnumeratorsOf<Button>();
 
+/// Where each button sits on the deck, indexed by the enumerator.
+///
+/// Positions rather than functions, because the deck prints nothing on them and
+/// what they do is the interface's business, not the driver's.
+inline constexpr std::array<std::string_view, ButtonCount> ButtonNames {
+    "top-left", "top-right", "bottom-left", "bottom-right"
+};
+
+/// @param button The button to name.
+/// @return Where it sits.
+[[nodiscard]] constexpr std::string_view nameOf(Button button) noexcept
+{
+    return ButtonNames[static_cast<std::size_t>(button)];
+}
+
 /// How the surround light strip is animated.
 ///
 /// Six modes, and the vendor's seventh -- "off" -- is not one of them: turning the

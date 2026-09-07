@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <expected>
 #include <mutex>
+#include <optional>
 #include <span>
 
 namespace ax310
@@ -29,6 +30,33 @@ namespace ax310
 /// It owns no thread either. poll() performs exactly one read cycle, and
 /// whoever wants a loop provides one; that keeps the threading policy with the
 /// host, which is the only place that knows what else is running.
+/// The effects chain's state, as much of it as this driver can name.
+///
+/// A value type rather than a series of calls, so it can be held, compared and
+/// stored whole -- the interface keeps one of these between runs and the driver
+/// puts it back after a connect, which is what stops the deck starting in
+/// whatever state the last program to touch it left behind.
+struct EffectState
+{
+    /// Whether each of protocol::EffectEnables is on, in that table's order.
+    ///
+    /// Default is every effect off. That is the only starting point this project
+    /// can define without guessing somebody's taste, and it is the harmless one:
+    /// an unprocessed signal, rather than a stranger's reverb.
+    std::array<bool, protocol::EffectEnables.size()> enabled {};
+
+    /// One entry per protocol::Parameter, set only where somebody chose a value.
+    ///
+    /// Per parameter rather than all-or-nothing, and this is the whole point.
+    /// Every parameter belongs to a framed command whose body carries far more
+    /// than that parameter, so writing one writes the lot -- and the bodies this
+    /// driver edits from are protocol::FramedDefaults, which are the captured
+    /// vendor payloads for reverb and the compressor. Handing back a full block
+    /// of values nobody chose therefore re-imposes exactly the microphone chain
+    /// that was taken out of the handshake, through the door marked settings.
+    std::array<std::optional<int>, protocol::ParameterCount> parameters {};
+};
+
 class Device
 {
   public:
@@ -111,6 +139,83 @@ class Device
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> setKnobLedBrightness(int percent);
 
+    /// Lights one function button in a colour.
+    ///
+    /// There is no brightness field: the level is baked into the channels before
+    /// they are sent, which is what protocol::scaledChannel is for.
+    ///
+    /// @param button Which button.
+    /// @param red Red, 0 to 255, at the brightness wanted.
+    /// @param green Green.
+    /// @param blue Blue.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> setButtonColour(Button button, std::uint8_t red,
+                                                                   std::uint8_t green,
+                                                                   std::uint8_t blue);
+
+    /// What the effects chain is to be put into after a connect.
+    ///
+    /// Held rather than applied at once: a connect is where it lands, because the
+    /// deck may not be attached yet and because that is the moment the state would
+    /// otherwise be inherited from whatever ran before.
+    ///
+    /// @param state What the chain should be.
+    void setEffectState(EffectState const& state);
+
+    /// @return The chain as this driver last set it: the enables from what was
+    ///         asked for, the parameters from the cache the writes go through.
+    [[nodiscard]] EffectState effectState() const;
+
+    /// Switches one effect on or off and remembers that it did.
+    /// @param command One of protocol::EffectEnables.
+    /// @param enabled Whether it should be on.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> setEffectEnabled(protocol::FramedCommand command,
+                                                                    bool enabled);
+
+    /// Puts the effects chain into the state setEffectState was given.
+    ///
+    /// Part of a connect. The handshake carries no microphone chain, so the deck
+    /// keeps whatever the last program to touch it configured -- which on a deck
+    /// the vendor software has run is that software's settings. This is what makes
+    /// the starting state a decision rather than an inheritance.
+    ///
+    /// The noise gate is not included: no enable for it has been captured, only
+    /// parameter blocks. Failures are logged rather than returned, for the reason
+    /// lightButtonsWithDefaults gives.
+    void applyEffectState();
+
+    /// Lights all four buttons with protocol::DefaultButtonColours, at
+    /// protocol::DefaultButtonBrightnessPercent.
+    ///
+    /// Part of a connect, because the captured initialisation leaves two of the
+    /// four dark. Failures are logged rather than returned: a button that would
+    /// not light is not a reason to refuse the deck.
+    void lightButtonsWithDefaults();
+
+    /// Sends one level write, no sooner than a gap after the last one.
+    ///
+    /// A dial sends one write per detent and the deck applies only some of a run
+    /// sent back to back, so a fast turn lands on whichever of them it kept.
+    /// Every other run of writes this driver sends is already spaced.
+    ///
+    /// Called with _paceMutex held, which is what keeps two threads from pacing
+    /// against the same instant and then writing together anyway.
+    ///
+    /// @param address Where to write.
+    /// @param values What to write.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> writeLevelSpaced(
+        std::uint8_t address, std::span<std::uint8_t const> values);
+
+    /// Reads back the mix and the levels the deck came up holding, and puts the
+    /// ring colour where that mix says it should be.
+    ///
+    /// Failures are logged rather than returned, the way restoreProperties'
+    /// are: the deck is up by this point, and a driver that refused the
+    /// connection over an unread register would be worse than one that says so.
+    void adoptTheDecksOwnState();
+
     /// Pushes one JPEG frame to the device's screen, chunked as the deck wants.
     /// @param frame The encoded frame.
     /// @return Nothing, or why the transfer failed.
@@ -129,12 +234,27 @@ class Device
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> setLevel(MixId mix, KnobId knob, Level level);
 
-    /// Reads one track's level back from the deck.
+    /// Reports one track's level, if the deck has ever said what it is.
     ///
-    /// @param mix Which mix to read.
+    /// A cache of the deck's own register and never a value of this driver's
+    /// own, which is why it can be empty: a read that failed leaves no level
+    /// here rather than a plausible one, and a caller that would otherwise draw
+    /// or write a fabricated number has to notice.
+    ///
+    /// @param mix Which mix to report.
     /// @param knob Which track.
-    /// @return The level the hardware holds, or why the read failed.
-    [[nodiscard]] std::expected<Level, DeviceError> level(MixId mix, KnobId knob);
+    /// @return The level, or nothing when no read or write has established it.
+    [[nodiscard]] std::optional<Level> level(MixId mix, KnobId knob) const;
+
+    /// Reads every track's level in both mixes back from the deck.
+    ///
+    /// Twelve round trips, so it belongs to a connect or to a mix change rather
+    /// than to whoever asks first. It is also the only thing that makes level()
+    /// worth reading: the deck holds these, this driver only remembers them.
+    ///
+    /// @return Nothing, or why the first failed read failed. The cache keeps
+    ///         whatever was read before that.
+    [[nodiscard]] std::expected<void, DeviceError> readLevels();
 
     /// Chooses which mix the deck monitors and displays on its knob rings.
     ///
@@ -144,6 +264,20 @@ class Device
     /// @param mix The mix to monitor.
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> selectMix(MixId mix);
+
+    /// Reports which mix the deck is monitoring.
+    ///
+    /// @return The mix it was last read to be on, or last told to move to.
+    [[nodiscard]] MixId selectedMix() const;
+
+    /// Reads which mix the deck is monitoring.
+    ///
+    /// Worth asking rather than assuming: connect() puts back the mix the deck
+    /// was on before the handshake, which is not necessarily the one this driver
+    /// would have picked.
+    ///
+    /// @return The mix Property::SelectedMix names, or why the read failed.
+    [[nodiscard]] std::expected<MixId, DeviceError> readSelectedMix();
 
     /// Sets one DSP parameter.
     ///
@@ -255,9 +389,19 @@ class Device
     int _touchY = 0;
     ReportState _last;
 
+    /// What _audioMeters holds for a channel nothing has been published for. A
+    /// percentage is never negative, so the first real reading always differs
+    /// from it and always goes out.
+    static constexpr int NoAudioMeterYet = -1;
+
     /// The meters as last published, so an unchanged set is not re-sent at the
-    /// report rate.
-    std::array<int, protocol::AudioMeterCount> _audioMeters { -1, -1, -1, -1, -1, -1 };
+    /// report rate. connect() puts every entry back to NoAudioMeterYet, so a
+    /// session never inherits a reading taken before it.
+    std::array<int, protocol::AudioMeterCount> _audioMeters = [] {
+        std::array<int, protocol::AudioMeterCount> nothing {};
+        nothing.fill(NoAudioMeterYet);
+        return nothing;
+    }();
 
     /// The DSP command bodies as this driver last sent them.
     ///
@@ -265,12 +409,50 @@ class Device
     /// the cache starts in agreement with the device. It has to be a cache: the
     /// framed family cannot be read back, so editing one field of a body means
     /// remembering the other twenty.
+    /// What the effects chain is put into on connect. Defaults to everything off.
+    EffectState _effectState {};
+
+    /// Which parameters somebody has actually chosen a value for. Nothing else
+    /// is stored or restored, because a parameter nobody set has no value worth
+    /// putting back -- only a default that writing would impose.
+    std::array<bool, protocol::ParameterCount> _parameterChosen {};
+
     std::array<protocol::FramedDefault, protocol::FramedDefaults.size()> _framedBodies =
         protocol::FramedDefaults;
 
-    /// Volume per knob, in percent. Held here because the deck reports turns as
-    /// a relative counter, so the absolute level is ours to keep, not its.
-    std::array<int, KnobCount> _volumes { 50, 50, 50, 50, 50, 50 };
+    /// Guards everything below it that both threads reach.
+    ///
+    /// The poll thread moves the mix's levels when a knob turns; the thread
+    /// driving the interface reads them to draw, and writes them when somebody
+    /// drags a track or switches mix. Separate from _writeMutex, which is held
+    /// across a transfer -- these are only ever held for an assignment.
+    mutable std::mutex _stateMutex;
+
+    /// Which mix the deck is monitoring, as last read from it or last chosen.
+    MixId _mix = MixId::Creator;
+
+    /// Every track's level in both mixes, as last read from the deck or last
+    /// written to it. Empty where neither has happened.
+    ///
+    /// A cache of the deck's own registers rather than a state of this driver's:
+    /// the deck reports a turn as a relative counter, so somebody has to hold the
+    /// absolute value, but what that value *is* comes from the hardware. The
+    /// rings display the selected mix's row, so this is also what the deck is
+    /// showing.
+    std::array<std::array<std::optional<Level>, KnobCount>, MixCount> _levels {};
+
+    /// Serialises level writes and the gaps between them, so two threads
+    /// dialling and dragging at once still leave the deck a run it will take.
+    /// Ordered before _writeMutex wherever both are held.
+    std::mutex _paceMutex;
+
+    /// When the last level write finished, so the next can be spaced from it.
+    /// Empty until one has. Guarded by _paceMutex.
+    std::optional<std::chrono::steady_clock::time_point> _lastLevelWrite;
+
+    /// Keeps one screen frame's chunks together. Ordered before _writeMutex,
+    /// which sendScreen still takes per chunk.
+    std::mutex _screenMutex;
 
     /// Serialises writes: the host may push a frame from one thread while
     /// another drives poll().

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <mutex>
 #include <numeric>
 #include <thread>
 #include <vector>
@@ -62,28 +63,47 @@ class ManualClock final: public IClock
     /// @param start The instant now() reports until something advances it.
     explicit ManualClock(std::chrono::steady_clock::time_point start = {}) noexcept: _now { start } {}
 
-    [[nodiscard]] std::chrono::steady_clock::time_point now() const override { return _now; }
+    [[nodiscard]] std::chrono::steady_clock::time_point now() const override
+    {
+        std::lock_guard<std::mutex> const lock { _mutex };
+        return _now;
+    }
 
     void sleepFor(std::chrono::milliseconds duration) override
     {
+        std::lock_guard<std::mutex> const lock { _mutex };
         _sleeps.push_back(duration);
         _now += duration;
     }
 
     /// Moves the clock forward without recording a sleep.
     /// @param duration How far forward.
-    void advance(std::chrono::milliseconds duration) noexcept { _now += duration; }
+    void advance(std::chrono::milliseconds duration)
+    {
+        std::lock_guard<std::mutex> const lock { _mutex };
+        _now += duration;
+    }
 
     /// @return Every duration sleepFor() was asked for, in order.
-    [[nodiscard]] std::vector<std::chrono::milliseconds> const& sleeps() const noexcept { return _sleeps; }
+    [[nodiscard]] std::vector<std::chrono::milliseconds> sleeps() const
+    {
+        std::lock_guard<std::mutex> const lock { _mutex };
+        return _sleeps;
+    }
 
     /// @return The sum of every recorded sleep.
-    [[nodiscard]] std::chrono::milliseconds totalSlept() const noexcept
+    [[nodiscard]] std::chrono::milliseconds totalSlept() const
     {
+        std::lock_guard<std::mutex> const lock { _mutex };
         return std::accumulate(_sleeps.begin(), _sleeps.end(), std::chrono::milliseconds { 0 });
     }
 
   private:
+    // Guarded, because the driver reaches a clock from whichever thread is
+    // writing to the deck, and the application writes from two: the poll loop
+    // applies a knob turn while the interface's thread drags a fader. An
+    // unguarded push_back from both is a reallocation under another thread.
+    mutable std::mutex _mutex;
     std::chrono::steady_clock::time_point _now;
     std::vector<std::chrono::milliseconds> _sleeps;
 };

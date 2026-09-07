@@ -40,4 +40,35 @@ function(ax310_place_runtime_dlls target)
                 "$<TARGET_RUNTIME_DLLS:${target}>" "$<TARGET_FILE_DIR:${target}>"
         COMMAND_EXPAND_LISTS
         VERBATIM)
+
+    ax310_place_qt_conf(${target})
+endfunction()
+
+# Telling a cross-built binary where Qt's plugins and QML modules are.
+#
+# TARGET_RUNTIME_DLLS above copies Qt6Core.dll and friends beside the executable,
+# but Qt's platform plugins and QML modules are loaded by path at runtime rather
+# than linked, so CMake does not know about them and they stay behind. On Windows
+# that is covered by QT_PLUGIN_PATH and QML2_IMPORT_PATH, which install-qt-action
+# exports in CI.
+#
+# Cross-compiled, nothing exports them, and the failure is genuinely hard to
+# read: Qt reports "no Qt platform plugin could be initialized" through a message
+# box rather than stderr and then calls qFatal, which is abort(), which the MSVC
+# runtime raises as __fastfail. So a headless run shows no output whatsoever and
+# exit code 0xC0000409 -- STATUS_STACK_BUFFER_OVERRUN -- which reads like memory
+# corruption and is nothing of the sort.
+#
+# A qt.conf beside the executable names the prefix outright and settles plugins
+# and QML imports together. Wine maps the Unix root at Z:, which is where the
+# drive letter comes from; this only applies when cross-compiling, since a native
+# Windows build resolves Qt the way it always has.
+function(ax310_place_qt_conf target)
+    if(NOT CMAKE_CROSSCOMPILING OR NOT TARGET Qt6::Core)
+        return()
+    endif()
+
+    file(GENERATE
+        OUTPUT "$<TARGET_FILE_DIR:${target}>/qt.conf"
+        CONTENT "[Paths]\nPrefix=Z:${QT6_INSTALL_PREFIX}\n")
 endfunction()

@@ -4,6 +4,19 @@
 # must not start failing because a toolchain lacks a language feature.
 include(CheckCXXSourceCompiles)
 
+# Probing requires being able to *ask* for C++26 in the first place. CMake has
+# no -std flag for C++26 on MSVC, so requesting the dialect there is not a failed
+# probe but a hard "requires the language dialect CXX26" generation error out of
+# try_compile -- which takes the whole configure with it, exactly the outcome the
+# note above says must not happen. CMAKE_CXX_STANDARD_LATEST reports 23 for MSVC
+# and 26 for GCC and Clang, so it separates "cannot be asked" from "asked and
+# said no" before try_compile is ever reached.
+if(CMAKE_CXX_STANDARD_LATEST LESS 26)
+    message(STATUS "C++26 cannot be requested from ${CMAKE_CXX_COMPILER_ID}; "
+                   "the name-table coverage check is skipped")
+    return()
+endif()
+
 # CMAKE_CXX_STANDARD has to move for the probe, not just CMAKE_REQUIRED_FLAGS:
 # CMake appends its own -std= after the required flags, so a -std=c++26 passed
 # that way is overridden and the probe reports a false negative.

@@ -60,11 +60,14 @@ namespace
     /// software pauses between them and the deck does not come back without it.
     constexpr std::chrono::milliseconds CommandGap { 10 };
 
-    /// Scale from the hardware's 0-20 knob range to the 0-100 the UI speaks.
-    constexpr int VolumePercentPerStep = 5;
-
     /// Leading bytes of a report to log.
-    constexpr std::size_t LoggedPrefixBytes = 16;
+    ///
+    /// Far enough to carry the audio meters, which run from byte 0x12 to 0x29 --
+    /// sixteen stopped two bytes short of them, so a hex dump of a report could
+    /// never answer a question about a meter and a hardware probe was needed to
+    /// see what the deck was actually sending.
+    constexpr std::size_t LoggedPrefixBytes = protocol::AudioMetersOffset
+                                              + (protocol::AudioMeterCount * protocol::AudioMeterStride);
 
     /// Strips the report-id byte some backends prepend and rejects sizes we
     /// cannot interpret, rather than decoding whatever arrived.
@@ -213,7 +216,35 @@ std::expected<ConnectionState, DeviceError> Device::connect()
 
     restoreProperties(snapshot);
 
+    // The handshake carries no microphone chain, so the deck keeps whatever the
+    // last program to touch it configured -- which on a deck the vendor software
+    // has run is that software's settings. Applying a state of our own is what
+    // makes the chain start where this project puts it.
+    applyEffectState();
+
+    adoptTheDecksOwnState();
+
+    // Last, and after the level reads that precede it rather than before them:
+    // choosing a mix writes a knob-ring record to the same address these use, and
+    // a run of records to one address is what the deck applies only some of.
+    //
+    // The captured sequence lights two of the four buttons and leaves the other
+    // two dark: it writes those two a blue that the byte pair it carries does not
+    // show. It also imposes whichever colours the person whose session was
+    // captured had chosen, which is not a default this project should ship. Four
+    // of our own go on afterwards, so the deck comes up with every button lit and
+    // each one tellable from its neighbours.
+    lightButtonsWithDefaults();
+
     _isSeeded = false;
+
+    // Re-armed, so this session publishes a meter reading of its own. The
+    // comparison below only forwards a set that differs from the last one, and
+    // nothing else resets it -- so a driver that had already seen these six
+    // percentages, in this process or before a replug, would show the reading it
+    // inherited and never correct it.
+    _audioMeters.fill(NoAudioMeterYet);
+
     publishState(ConnectionState::Connected);
     return ConnectionState::Connected;
 }
@@ -227,7 +258,14 @@ void Device::disconnect()
     }
 
     logTo(_logger, LogLevel::Info, "Shutting the AX310 down");
-    if (auto const sent = sendSequence(commands::ShutdownPayloads, std::chrono::milliseconds { 0 }); !sent)
+
+    // Paced the same as the handshake. Sent back to back, some of these do not
+    // take: the sequence darkens the four buttons with four records to the same
+    // address one after another, and a deck shut down that way is left with one
+    // of them still lit -- a different one on different runs. The handshake
+    // already carries a gap for the same reason, and a shutdown is not a place
+    // where a tenth of a second matters.
+    if (auto const sent = sendSequence(commands::ShutdownPayloads, CommandGap); !sent)
         logTo(_logger, LogLevel::Warning, "Shutdown sequence failed: {}", describe(sent.error()));
 
     {
@@ -405,19 +443,97 @@ std::expected<void, DeviceError> Device::setLevel(MixId mix, KnobId knob, Level 
     std::array<std::uint8_t, 1> const values { level.steps() };
 
     // Not fenced with SettingsTransaction, matching the vendor: it brackets mode
-    // changes and leaves a level drag unbracketed.
-    return writeProperty(protocol::levelAddressOf(block, knob), values);
+    // changes and leaves a level drag unbracketed. Spaced all the same, because
+    // a dial is a run of writes and the deck does not take those back to back.
+    //
+    // The whole sequence is under one lock: two of these arriving together --
+    // a hand on a knob and a pointer on a fader -- would otherwise measure the
+    // same gap, wait the same time, and then write together anyway.
+    std::lock_guard<std::mutex> const pacing { _paceMutex };
+
+    if (auto const written = writeLevelSpaced(protocol::levelAddressOf(block, knob), values);
+        !written)
+        return written;
+
+    // Recorded as soon as the level register has taken it, and before the write
+    // below that may not: the deck is holding this level now, and a cache saying
+    // otherwise is what the next relative turn would compute from.
+    {
+        std::lock_guard<std::mutex> const lock { _stateMutex };
+        _levels[indexOf(mix)][indexOf(knob)] = level;
+    }
+
+    // The microphone takes two writes where every other track takes one. The
+    // vendor's captures show 0x35 carrying the same value alongside the level
+    // whenever the Mic slider moves, and nothing else in the block behaves that
+    // way. Only the creator mix: 0x35 is a single register and the pairing has
+    // only ever been seen against 0x27.
+    if (knob == KnobId::Mic && mix == MixId::Creator)
+        return writeLevelSpaced(std::to_underlying(protocol::Property::KnobPropertyAt35), values);
+
+    return {};
 }
 
-std::expected<Level, DeviceError> Device::level(MixId mix, KnobId knob)
+std::optional<Level> Device::level(MixId mix, KnobId knob) const
 {
-    auto const block =
-        mix == MixId::Creator ? protocol::Property::CreatorMixLevels : protocol::Property::AudienceMixLevels;
+    std::lock_guard<std::mutex> const lock { _stateMutex };
+    return _levels[indexOf(mix)][indexOf(knob)];
+}
 
-    std::array<std::uint8_t, 1> values {};
-    return readProperty(protocol::levelAddressOf(block, knob), values).transform([&values] {
-        return Level::fromSteps(values[0]);
-    });
+std::expected<void, DeviceError> Device::writeLevelSpaced(std::uint8_t address,
+                                                          std::span<std::uint8_t const> values)
+{
+    // The wait falls on whichever thread asked, and that includes the one
+    // drawing: a fader drag reaches here too. It is bounded by CommandGap and
+    // only happens above a hundred writes a second, which a pointer moving at
+    // display rate does not reach -- so in practice a drag waits for nothing and
+    // a hand spinning a knob is what pays. Taking the write off this thread
+    // altogether wants a queue between the interface and the deck, which is a
+    // larger change than the defect being fixed here.
+    if (_lastLevelWrite)
+    {
+        auto const since =
+            std::chrono::duration_cast<std::chrono::milliseconds>(_clock.now() - *_lastLevelWrite);
+        if (since < CommandGap)
+            _clock.sleepFor(CommandGap - since);
+    }
+
+    auto const written = writeProperty(address, values);
+
+    // Stamped after the transfer rather than before it, so the gap the deck sees
+    // is the one between writes landing, not between them being started.
+    _lastLevelWrite = _clock.now();
+    return written;
+}
+
+std::expected<void, DeviceError> Device::readLevels()
+{
+    std::expected<void, DeviceError> outcome {};
+
+    for (auto const mix: AllMixes)
+    {
+        auto const block = mix == MixId::Creator ? protocol::Property::CreatorMixLevels
+                                                 : protocol::Property::AudienceMixLevels;
+
+        for (auto const knob: AllKnobs)
+        {
+            std::array<std::uint8_t, 1> values {};
+            if (auto const read = readProperty(protocol::levelAddressOf(block, knob), values); !read)
+            {
+                // Reported once, and the rest are still attempted: a deck that
+                // answers eleven of twelve is better cached from eleven than
+                // abandoned at the first refusal.
+                if (outcome)
+                    outcome = std::unexpected(read.error());
+                continue;
+            }
+
+            std::lock_guard<std::mutex> const lock { _stateMutex };
+            _levels[indexOf(mix)][indexOf(knob)] = Level::fromSteps(values[0]);
+        }
+    }
+
+    return outcome;
 }
 
 std::expected<void, DeviceError> Device::selectMix(MixId mix)
@@ -425,13 +541,81 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
     std::array<std::uint8_t, 1> const open { 0x01 };
     std::array<std::uint8_t, 1> const chosen { static_cast<std::uint8_t>(indexOf(mix)) };
     std::array<std::uint8_t, 1> const close { 0x00 };
+    std::array<std::uint8_t, 1> const rings { protocol::KnobLedSelectForMix[indexOf(mix)] };
 
     auto const fence = static_cast<std::uint8_t>(protocol::Property::SettingsTransaction);
     auto const selector = static_cast<std::uint8_t>(protocol::Property::SelectedMix);
+    auto const ringSelect = static_cast<std::uint8_t>(protocol::Property::KnobLedSelect);
+
+    // SelectedMix alone moves the audio and leaves the knob rings behind, showing
+    // the mix that was on before with the colour it had. Two other writes are what
+    // move them, and all three go inside one fence:
+    //
+    //   * KnobLedSelect, which decides the levels the rings display;
+    //   * the ring colour, because the record carries no mix -- the deck applies
+    //     it to whichever mix is selected, so the new mix's colour has to be said.
+    //
+    // The colour goes after the switch, which is not the order the vendor's own
+    // capture has -- it writes the colour first and its rings follow. The reason
+    // for differing is that a record carries no mix, so the deck may apply it to
+    // whichever one is selected when it arrives; the capture says that cannot be
+    // the whole story.
+    //
+    // The record is spaced from what surrounds it. Sent with no gap on either
+    // side, it did not land: a cold deck came up on the audience mix still
+    // wearing the handshake's creator blue.
+    //
+    // Which of the two changes here fixes that is not settled. The vendor's own
+    // capture writes the colour four commands *ahead* of the switch and it works,
+    // which argues against the order being what matters -- but it also leaves 289
+    // ms in front of that record and 126 ms behind it, where this sent it with
+    // none. See hardware-facts.md; a deck settles it, and this is the guess until
+    // one does.
+    auto const& colour = protocol::MixRingColours[indexOf(mix)];
+    auto const record = protocol::knobColourRecord(colour.red, colour.green, colour.blue);
+
+    // A gap is a step of the sequence like the writes are, so it reads as one.
+    auto const pace = [this]() -> std::expected<void, DeviceError> {
+        _clock.sleepFor(CommandGap);
+        return {};
+    };
 
     return writeProperty(fence, open)
+        .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
-        .and_then([&] { return writeProperty(fence, close); });
+        .and_then(pace)
+        .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
+        .and_then(pace)
+        .and_then([&] { return writeProperty(fence, close); })
+        .transform([&] {
+            std::lock_guard<std::mutex> const lock { _stateMutex };
+            _mix = mix;
+        });
+}
+
+MixId Device::selectedMix() const
+{
+    std::lock_guard<std::mutex> const lock { _stateMutex };
+    return _mix;
+}
+
+std::expected<MixId, DeviceError> Device::readSelectedMix()
+{
+    // Asked for again rather than taken from the snapshot connect() holds. That
+    // one was read before the handshake; this is read after the restore, so it
+    // is what the deck ended up on rather than what it started on -- and a
+    // restore that did not take is exactly the case worth catching.
+    std::array<std::uint8_t, 1> values {};
+    return readProperty(std::to_underlying(protocol::Property::SelectedMix), values)
+        .and_then([&values]() -> std::expected<MixId, DeviceError> {
+            // Anything outside the two the register is documented to carry is a
+            // reply this driver cannot act on, and guessing a mix would put the
+            // rings and the audio somewhere nobody asked for.
+            if (values[0] >= MixCount)
+                return std::unexpected(DeviceError::ReadFailed);
+
+            return static_cast<MixId>(values[0]);
+        });
 }
 
 std::expected<void, DeviceError> Device::setParameter(protocol::Parameter parameter, int value)
@@ -443,6 +627,7 @@ std::expected<void, DeviceError> Device::setParameter(protocol::Parameter parame
 
     auto& entry = _framedBodies[*slot];
     auto const clamped = std::clamp(value, info.minimum, info.maximum);
+    _parameterChosen[indexOf(parameter)] = true;
 
     switch (info.encoding)
     {
@@ -552,8 +737,183 @@ std::expected<void, DeviceError> Device::setKnobLedBrightness(int percent)
     return _transport.sendFeatureReport(framed);
 }
 
+std::expected<void, DeviceError> Device::setButtonColour(Button button, std::uint8_t red,
+                                                         std::uint8_t green, std::uint8_t blue)
+{
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    auto const record =
+        protocol::buttonColourRecord(protocol::selectorFor(button), red, green, blue, true);
+    auto const framed =
+        protocol::frameFeatureReport(protocol::setPropertyAt(protocol::ButtonColourAddress, record));
+
+    std::lock_guard<std::mutex> const lock { _writeMutex };
+
+    // Checked inside the lock, for the reason setKnobLedBrightness gives.
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    return _transport.sendFeatureReport(framed);
+}
+
+void Device::setEffectState(EffectState const& state)
+{
+    _effectState = state;
+}
+
+EffectState Device::effectState() const
+{
+    EffectState state;
+    state.enabled = _effectState.enabled;
+
+    // Only what somebody chose. Reporting every parameter would report the
+    // defaults the cache starts from, and those defaults are captured vendor
+    // payloads: stored and handed back on the next connect they put the whole
+    // microphone chain back on the deck.
+    for (auto const& info: protocol::Parameters)
+        if (_parameterChosen[indexOf(info.id)])
+            state.parameters[indexOf(info.id)] = parameter(info.id);
+
+    return state;
+}
+
+std::expected<void, DeviceError> Device::setEffectEnabled(protocol::FramedCommand command,
+                                                          bool enabled)
+{
+    // The position rather than the iterator, and never named as one. A
+    // std::array iterator is a raw pointer in libstdc++ and a class type in
+    // MSVC's library, so a variable holding it is either `auto const*` -- which
+    // MSVC cannot deduce -- or `auto`, which clang-tidy's readability-qualified-
+    // auto rejects on libstdc++. An index is neither, and it is what the line
+    // below wanted anyway. Past the end means the command is not one of these.
+    auto const index = static_cast<std::size_t>(std::distance(
+        protocol::EffectEnables.begin(), std::ranges::find(protocol::EffectEnables, command)));
+
+    if (index >= protocol::EffectEnables.size())
+        return std::unexpected(DeviceError::WriteFailed);
+
+    std::array<std::uint8_t, 1> const value { static_cast<std::uint8_t>(enabled ? 0x01 : 0x00) };
+    auto const sent = sendFramed(command, value);
+    if (sent)
+        _effectState.enabled[index] = enabled;
+
+    return sent;
+}
+
+void Device::applyEffectState()
+{
+    // Parameters first, enables last, and the order is load-bearing. A parameter
+    // write sends its whole framed body, and the delay effect's body carries the
+    // byte that says which effect is running -- so writing a parameter after an
+    // enable can switch back on what the enable just switched off. The enables
+    // have the final word this way round.
+    for (auto const& info: protocol::Parameters)
+    {
+        auto const wanted = _effectState.parameters[indexOf(info.id)];
+        if (!wanted)
+            continue;
+
+        if (auto const sent = setParameter(info.id, *wanted); !sent)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not restore {}: {}",
+                  info.name,
+                  describe(sent.error()));
+    }
+
+    for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
+    {
+        auto const command = protocol::EffectEnables[index];
+        std::array<std::uint8_t, 1> const value {
+            static_cast<std::uint8_t>(_effectState.enabled[index] ? 0x01 : 0x00)
+        };
+
+        if (auto const sent = sendFramed(command, value); !sent)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not set {}: {}",
+                  protocol::nameIn(protocol::FramedCommandNames, std::to_underlying(command)),
+                  describe(sent.error()));
+    }
+}
+
+void Device::adoptTheDecksOwnState()
+{
+    // The restore above puts the deck back on whichever mix it was monitoring
+    // before the handshake, so which mix that is has to be asked rather than
+    // assumed -- and the ring colour cannot be restored with it, because it lives
+    // in a 0xc0 record rather than a property and the handshake has just written
+    // creator blue over it. Selecting the mix the deck came back on writes that
+    // colour, so the rings, the audio and whatever draws this agree again.
+    auto const asked = readSelectedMix();
+    if (!asked)
+        logTo(_logger, LogLevel::Warning, "could not read the selected mix: {}", describe(asked.error()));
+
+    // Chosen even when the read did not answer, rather than left. The restore
+    // above may have put the deck on the audience mix, and a driver holding
+    // Creator against that writes the block the deck is neither monitoring nor
+    // displaying -- audio moving in a mix nobody hears. Settling it either way
+    // is what keeps the deck and this cache saying the same thing.
+    auto const wanted = asked.value_or(MixId::Creator);
+    if (auto const chosen = selectMix(wanted); !chosen)
+        logTo(_logger,
+              LogLevel::Warning,
+              "could not select the {} mix: {}",
+              nameOf(wanted),
+              describe(chosen.error()));
+
+    // Twelve round trips, one per address. The blocks can be read whole -- the
+    // vendor does, and PreservedAddresses already reads 0x27 with length seven --
+    // but which of the seven bytes carries which track has never been checked
+    // against the hardware, and getting that wrong assigns every track the wrong
+    // level without saying anything. Per address is unambiguous.
+    //
+    // Worth the trips either way: a relative knob turn needs an absolute level to
+    // move, and this is the only place that level comes from the hardware.
+    if (auto const read = readLevels(); !read)
+        logTo(_logger, LogLevel::Warning, "could not read the levels: {}", describe(read.error()));
+}
+
+void Device::lightButtonsWithDefaults()
+{
+    for (auto const button: AllButtons)
+    {
+        // Spaced, because the deck applies only some of a run of records sent
+        // back to back -- the same reason the shutdown sequence is paced. Without
+        // this only the last of the four lights, and the other three stay dark.
+        //
+        // Before each rather than after, so the first is separated from the ring
+        // record the mix selection has just sent to this same address, and the
+        // last does not pay for a gap with nothing on the other side of it.
+        _clock.sleepFor(CommandGap);
+
+        auto const& colour = protocol::DefaultButtonColours[indexOf(button)];
+        auto const level = protocol::DefaultButtonBrightnessPercent;
+        auto const lit = setButtonColour(button,
+                                         protocol::scaledChannel(colour.red, level),
+                                         protocol::scaledChannel(colour.green, level),
+                                         protocol::scaledChannel(colour.blue, level));
+        if (!lit)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not light the {} button: {}",
+                  nameOf(button),
+                  describe(lit.error()));
+    }
+}
+
 std::expected<void, DeviceError> Device::sendScreen(std::span<std::uint8_t const> frame)
 {
+    // One frame at a time, for the whole frame. The chunks carry a sequence the
+    // deck reassembles into one image and a marker saying which one ends it, so
+    // two frames sent at once arrive as a single frame made of both -- and what
+    // the panel then shows is a blend of two moments, or the older one kept
+    // because the newer never completed. Held around the per-chunk lock below
+    // rather than instead of it: that one also excludes the property writes, and
+    // holding it for a whole frame would make a knob turn wait on the screen.
+    std::lock_guard<std::mutex> const frameLock { _screenMutex };
+
     std::uint8_t sequence = 0;
 
     // The deck needs to be told which chunk ends the frame, so the count has to
@@ -794,12 +1154,53 @@ void Device::dispatchKnobValues(protocol::InputReport const& report)
         if (delta == 0)
             continue;
 
-        auto const volume = std::clamp(_volumes[index] + (delta * VolumePercentPerStep), 0, 100);
-        if (volume == _volumes[index])
+        // The turn is relative, so it moves whatever the deck last said this
+        // track was -- in the mix the deck is monitoring, because that is the one
+        // the knob is operating. Reading the base from anywhere else is what made
+        // a turn after a mix switch jump to a level nobody had set.
+        //
+        // Taken as a copy and the lock let go before the write below, which takes
+        // it again to record what landed.
+        MixId mix {};
+        std::optional<Level> held;
+        {
+            std::lock_guard<std::mutex> const lock { _stateMutex };
+            mix = _mix;
+            held = _levels[indexOf(mix)][index];
+        }
+
+        // Nothing to be relative to. A read that failed leaves no level here, and
+        // inventing one would write a number nobody chose onto a deck that may be
+        // carrying a live call -- so the turn is refused and said out loud.
+        if (!held)
+        {
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "ignoring the {} knob: the deck has not said what its {} level is",
+                  nameOf(knob),
+                  nameOf(mix));
+            continue;
+        }
+
+        auto const wanted = Level::fromPercent(held->asPercent() + (delta * Level::PercentPerStep));
+        if (wanted == *held)
             continue;
 
-        _volumes[index] = volume;
-        _listener.onDeviceEvent(KnobVolumeChanged { .knob = knob, .volume = volume });
+        // Applied here rather than left to a listener: the deck reports the turn
+        // and changes nothing itself, so a driver that only announces it leaves
+        // the knobs moving, the numbers moving, and the audio where it was.
+        if (auto const written = setLevel(mix, knob, wanted); !written)
+        {
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not apply the {} knob's turn: {}",
+                  nameOf(knob),
+                  describe(written.error()));
+            continue;
+        }
+
+        _listener.onDeviceEvent(
+            KnobVolumeChanged { .mix = mix, .knob = knob, .volume = wanted.asPercent() });
     }
 }
 

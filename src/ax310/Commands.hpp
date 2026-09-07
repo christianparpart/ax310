@@ -68,7 +68,7 @@ namespace ax310::commands
 /// so the padding here is zero. The deck reads the declared length and no more --
 /// every command this driver sends is zero-padded and the hardware takes them,
 /// including the colour records that were driven by hand.
-inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
+inline constexpr std::array<protocol::Payload, 53> InitPayloads { {
     // **Identify yourself.** The very first thing the vendor sends, and what
     // comes back is the firmware version -- which is how the group was decoded,
     // by holding the reply against the string Creator Central was displaying.
@@ -116,106 +116,24 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
     // Microphone gain, 0x1a of a 0x00..0x38 range.
     protocol::setProperty(protocol::Property::MicGain, std::uint8_t { 0x1a }),
 
-    // The delay effect: disable, configure, enable, configure again. The order
-    // is the tell -- this is a settings restore, not a hardware bring-up, and
-    // payload 25 is byte-identical to what the vendor sends when reverb is
-    // switched on. **Replaying this turns the user's reverb on.**
-    protocol::framedPayload(protocol::FramedCommand::DelayEffectEnable, 0x00),
-    protocol::framedPayload(protocol::FramedCommand::DelayEffectParameters,
-                            std::to_array<std::uint8_t>({
-                                0x40, 0xff, 0x7f, 0xff, 0x40, 0x7f, 0x80, 0x66,
-                                0x7f, 0x10, 0x3f, 0x4e, 0x04, 0x40, 0x00, 0x43,
-                                0x05, 0x00, 0x00, 0x00, 0x10 })),
-    protocol::framedPayload(protocol::FramedCommand::DelayEffectEnable, 0x01),
-    protocol::framedPayload(protocol::FramedCommand::DelayEffectParameters,
-                            std::to_array<std::uint8_t>({
-                                0x40, 0xff, 0x7f, 0xff, 0x40, 0x7f, 0x80, 0x66,
-                                0x7f, 0x10, 0x3f, 0x4e, 0x04, 0x40, 0x01, 0x43,
-                                0x05, 0x00, 0x00, 0x00, 0x10 })),
-    protocol::framedPayload(protocol::FramedCommand::DelayEffectParameters,
-                            std::to_array<std::uint8_t>({
-                                0x40, 0x9b, 0xff, 0x19, 0x40, 0x7f, 0x80, 0x66,
-                                0xe5, 0x10, 0x00, 0x4e, 0x04, 0x40, 0x01, 0x43,
-                                0x05, 0xff, 0xca, 0x00, 0x10 })),
-
-    // The noise gate. Payload 26 is all-zero apart from its tail; 27 and 28 are
-    // identical to each other, so one of the three is redundant.
-    protocol::framedPayload(protocol::FramedCommand::NoiseGateParameters,
-                            std::to_array<std::uint8_t>({
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                0xff, 0x7f, 0xff, 0xff, 0xff, 0x7f })),
-    protocol::framedPayload(protocol::FramedCommand::NoiseGateParameters,
-                            std::to_array<std::uint8_t>({
-                                0x9b, 0x03, 0x8d, 0x02, 0x2c, 0x00, 0x00, 0x00,
-                                0xb9, 0x01, 0x96, 0x78, 0x00, 0x00, 0xff, 0x7f,
-                                0xd8, 0x02, 0xbb, 0x0f, 0x01, 0x00 })),
-    protocol::framedPayload(protocol::FramedCommand::NoiseGateParameters,
-                            std::to_array<std::uint8_t>({
-                                0x9b, 0x03, 0x8d, 0x02, 0x2c, 0x00, 0x00, 0x00,
-                                0xb9, 0x01, 0x96, 0x78, 0x00, 0x00, 0xff, 0x7f,
-                                0xd8, 0x02, 0xbb, 0x0f, 0x01, 0x00 })),
-
-    // The compressor, two parameter blocks with no enable between them.
-    protocol::framedPayload(protocol::FramedCommand::CompressorParameters,
-                            std::to_array<std::uint8_t>({
-                                0x80, 0xeb, 0x99, 0x19, 0xa3, 0x02, 0x49, 0x00,
-                                0x80, 0xf9, 0xcc, 0x04, 0x91, 0x00, 0x07, 0x00,
-                                0x10 })),
-    protocol::framedPayload(protocol::FramedCommand::CompressorParameters,
-                            std::to_array<std::uint8_t>({
-                                0x00, 0xa0, 0x00, 0x10, 0x83, 0x0e, 0x83, 0x0e,
-                                0x00, 0xee, 0x00, 0x0c, 0xd6, 0x04, 0x31, 0x00,
-                                0x1f })),
-
-    // The equaliser: three enables, then eight bands.
-    protocol::framedPayload(protocol::FramedCommand::EqualiserEnableA, 0x01),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserEnableB, 0x01),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserEnableC, 0x01),
-
-    // Eight bands, indexed 0..7 in body byte 0, each with an enable in byte 1 and
-    // five Q30 biquad coefficients. Bands 5 and 6 carry 0x00 in byte 2 where the
-    // others carry 0x01.
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x00, 0x01, 0x01, 0xe4, 0xd8, 0xac, 0x3f, 0x39,
-                                0x4e, 0xa6, 0x80, 0xe4, 0xd8, 0xac, 0x3f, 0x1c,
-                                0xb8, 0xa6, 0x80, 0xab, 0x1b, 0x5a, 0x3f })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x01, 0x01, 0x01, 0xb0, 0x23, 0x14, 0x40, 0x89,
-                                0x65, 0x4d, 0x81, 0x9a, 0xc1, 0xa1, 0x3e, 0x89,
-                                0x65, 0x4d, 0x81, 0x4b, 0xe5, 0xb5, 0x3e })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x40, 0x9c,
-                                0x1a, 0x41, 0x83, 0x33, 0x2a, 0xd3, 0x3c, 0x9c,
-                                0x1a, 0x41, 0x83, 0x33, 0x2a, 0xd3, 0x3c })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x03, 0x01, 0x01, 0x41, 0x4b, 0x35, 0x3f, 0xa8,
-                                0x45, 0x01, 0x88, 0xa3, 0x8b, 0x17, 0x39, 0xa8,
-                                0x45, 0x01, 0x88, 0xe4, 0xd6, 0x4c, 0x38 })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x04, 0x01, 0x01, 0x00, 0x00, 0x00, 0x40, 0x83,
-                                0xe2, 0xf6, 0x8c, 0x47, 0x90, 0x36, 0x34, 0x83,
-                                0xe2, 0xf6, 0x8c, 0x47, 0x90, 0x36, 0x34 })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x05, 0x01, 0x00, 0x15, 0x32, 0x38, 0x69, 0x77,
-                                0xd2, 0x1b, 0x80, 0xf5, 0xca, 0xad, 0x2e, 0x77,
-                                0xd2, 0x1b, 0x80, 0x09, 0xfd, 0xe5, 0x17 })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x06, 0x01, 0x00, 0x13, 0xf8, 0x1e, 0x6e, 0x7d,
-                                0x7c, 0x33, 0xc8, 0xcb, 0x52, 0x71, 0x17, 0x7d,
-                                0x7c, 0x33, 0xc8, 0xde, 0x4a, 0x90, 0x05 })),
-    protocol::framedPayload(protocol::FramedCommand::EqualiserBand,
-                            std::to_array<std::uint8_t>({
-                                0x07, 0x01, 0x01, 0x64, 0x62, 0x41, 0x22, 0xc7,
-                                0xc4, 0x82, 0x44, 0x64, 0x62, 0x41, 0x22, 0x93,
-                                0x7b, 0x06, 0x36, 0xfb, 0x0d, 0xff, 0x12 })),
+    // **The DSP chain is deliberately not replayed.**
+    //
+    // The capture writes twenty-one payloads here -- the delay effect twice with
+    // three parameter blocks, three noise-gate blocks, two compressor blocks, the
+    // three equaliser enables and eight bands -- and every one of them is one
+    // person's saved microphone settings rather than anything a deck needs to
+    // start. The delay block gives itself away by its order: disable, configure,
+    // enable, configure again is what a settings restore looks like, not a
+    // bring-up, and its enable payload is byte-identical to what the vendor sends
+    // when somebody switches reverb on.
+    //
+    // Replaying them is audible: reverb on and a compressor pumping, on somebody
+    // else's curve, at every connect. The DSP has no read-back, so the snapshot
+    // and restore that protects the property registers cannot protect this --
+    // what the sequence imposes stays imposed.
+    //
+    // Device::connect() applies an effects state instead, so the chain starts
+    // where this project puts it rather than where a capture leaves it.
 
     // A write in group 0x09, which nobody has identified. Together with 0x03 and
     // 0x04 it is one of the three writes left in either sequence that are neither

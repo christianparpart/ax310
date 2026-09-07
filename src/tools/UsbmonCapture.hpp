@@ -19,6 +19,16 @@ struct CapturedUrb
     std::uint8_t device = 0;       ///< usbmon device number.
     std::uint32_t urbLength = 0;   ///< Length the URB declared, which may exceed what was captured.
     bool isCompletion = false;     ///< Whether this is the callback rather than the submission.
+
+    /// When usbmon stamped it, in microseconds since the epoch.
+    ///
+    /// From the URB header rather than the pcap record around it: it is the
+    /// kernel's own view of when the transfer happened, and it is what makes a
+    /// capture answer questions about pacing rather than only about bytes. This
+    /// deck drops records sent too close together, so how far apart two writes
+    /// went out is as much a fact of the protocol as what they carried.
+    std::int64_t timestampMicroseconds = 0;
+
     std::vector<std::uint8_t> payload;
 
     /// @return Whether this URB travelled from the device to the host.

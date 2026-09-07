@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: Apache-2.0
+/// What the interface remembers between runs, and what it refuses to remember.
+
+#include <app/Settings.hpp>
+#include <ax310/Protocol.hpp>
+
+#include <QFile>
+#include <QSettings>
+#include <QTemporaryDir>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <array>
+#include <utility>
+
+using namespace ax310;
+
+namespace
+{
+
+/// A settings file of its own, so a test never writes into whoever runs it.
+struct SettingsFixture
+{
+    QTemporaryDir directory;
+    QString path { directory.filePath("ax310.ini") };
+};
+
+} // namespace
+
+TEST_CASE("a settings file nobody has written leaves every effect off", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    auto const state = app::Settings { fixture.path }.effects();
+
+    // The default has to be silence rather than whatever the deck was left in:
+    // the DSP has no read-back, so an unprocessed signal is the only starting
+    // point this project can define without guessing somebody's taste.
+    CHECK(std::ranges::none_of(state.enabled, [](bool on) { return on; }));
+
+    // Every parameter unset, which is the difference that matters. A parameter
+    // arriving with a value nobody chose is written to the deck on the next
+    // connect, and because a parameter write sends its whole framed body, that
+    // puts a captured effect configuration back on the hardware.
+    CHECK(std::ranges::none_of(state.parameters,
+                               [](auto const& chosen) { return chosen.has_value(); }));
+}
+
+TEST_CASE("the effects chain comes back the way it was left", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    EffectState wanted;
+    wanted.enabled.front() = true;
+    wanted.enabled.back() = true;
+
+    // Two chosen and the rest left alone, so the round trip has to carry which
+    // is which and not merely the numbers.
+    wanted.parameters[protocol::indexOf(protocol::Parameter::ReverbDecay)] = 90;
+    wanted.parameters[protocol::indexOf(protocol::Parameter::CompressorRatio)] = 4;
+
+    app::Settings { fixture.path }.setEffects(wanted);
+
+    auto const restored = app::Settings { fixture.path }.effects();
+    CHECK(restored.enabled == wanted.enabled);
+    CHECK(restored.parameters == wanted.parameters);
+}
+
+TEST_CASE("a frame rate outside what the driver will send is brought inside it", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    app::Settings settings { fixture.path };
+
+    settings.setPanelFps(100000);
+    CHECK(settings.panelFps() == protocol::MaxPanelFps);
+
+    settings.setPanelFps(0);
+    CHECK(settings.panelFps() == protocol::MinPanelFps);
+
+    settings.setPanelFps(protocol::DefaultPanelFps);
+    CHECK(settings.panelFps() == protocol::DefaultPanelFps);
+}
+
+TEST_CASE("a frame rate written straight into the file is capped when read", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    // Written past the setter, the way somebody editing the file by hand would.
+    // A cap enforced only on the way in is not a cap: the number that costs a
+    // core and a share of the USB bus is the one that gets used, not the one that
+    // was typed into a dialog.
+    {
+        QSettings store { fixture.path, QSettings::IniFormat };
+        store.setValue("panel/framesPerSecond", 10000);
+    }
+
+    CHECK(app::Settings { fixture.path }.panelFps() == protocol::MaxPanelFps);
+}
+
+TEST_CASE("a parameter this build does not know is left where it lies", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    // A key from a build that knew a parameter this one does not. Keyed by the
+    // parameter's own number rather than by position, an unknown key is simply
+    // not read -- where a positional block would shift every value after it onto
+    // the wrong parameter.
+    {
+        QSettings store { fixture.path, QSettings::IniFormat };
+        store.setValue("effects/parameter_99", 7);
+        store.setValue(QStringLiteral("effects/parameter_%1")
+                           .arg(std::to_underlying(protocol::Parameter::ReverbDamp)),
+                       33);
+    }
+
+    auto const state = app::Settings { fixture.path }.effects();
+    CHECK(state.parameters[protocol::indexOf(protocol::Parameter::ReverbDamp)] == 33);
+    CHECK(std::ranges::count_if(state.parameters,
+                                [](auto const& chosen) { return chosen.has_value(); })
+          == 1);
+}
+
+TEST_CASE("the keys written to the file are plain ASCII", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    {
+        EffectState wanted;
+        wanted.enabled.front() = true;
+        wanted.parameters[protocol::indexOf(protocol::Parameter::ReverbDamp)] = 33;
+        app::Settings { fixture.path }.setEffects(wanted);
+    }
+
+    QFile file { fixture.path };
+    REQUIRE(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    auto const contents = QString::fromUtf8(file.readAll());
+
+    // An INI section holds one group level. Ask QSettings for two and it writes
+    // the second as a backslash inside the key -- `enabled\\85` -- which no other
+    // INI parser reads back and which nobody can hand-edit with confidence.
+    INFO(contents.toStdString());
+    CHECK_FALSE(contents.contains(QLatin1Char('\\')));
+    CHECK_FALSE(contents.contains(QLatin1Char('%')));
+
+    for (auto const character: contents)
+        CHECK(character.unicode() < 128);
+}
+
+TEST_CASE("an effects chain stored under the folded keys still reads", "[settings]")
+{
+    SettingsFixture const fixture;
+    REQUIRE(fixture.directory.isValid());
+
+    // A file on disk carries the two-level spelling, and a rename that silently
+    // switched every effect off and dropped every chosen parameter would be a
+    // worse defect than the one it fixed.
+    {
+        QSettings store { fixture.path, QSettings::IniFormat };
+        store.setValue(QStringLiteral("effects/enabled/%1")
+                           .arg(std::to_underlying(protocol::EffectEnables.front()),
+                                2,
+                                16,
+                                QLatin1Char('0')),
+                       true);
+        store.setValue(QStringLiteral("effects/parameter/%1")
+                           .arg(std::to_underlying(protocol::Parameter::ReverbDamp)),
+                       33);
+    }
+
+    auto const state = app::Settings { fixture.path }.effects();
+    CHECK(state.enabled.front());
+    CHECK(state.parameters[protocol::indexOf(protocol::Parameter::ReverbDamp)] == 33);
+
+    // Written back, the file keeps one spelling. Two would mean the keys this
+    // change exists to remove survive in every file that had them.
+    app::Settings { fixture.path }.setEffects(state);
+
+    QFile file { fixture.path };
+    REQUIRE(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    auto const contents = QString::fromUtf8(file.readAll());
+    INFO(contents.toStdString());
+    CHECK_FALSE(contents.contains(QLatin1Char('\\')));
+}

@@ -94,9 +94,56 @@ ctest --preset clang-debug
 Presets: `clang-debug`, `gcc-release`, `clang-asan-ubsan`, `clang-tsan`,
 `clang-coverage`. All four of the first are run by CI on every push.
 
+### Windows binaries, built from Linux
+
+`cross-cl-release` and `cross-clangcl-release` produce the Windows build without
+a Windows machine, against the genuine MSVC toolchain and Windows SDK that
+[msvc-wine] downloads from Microsoft. `cross-cl-release` drives Microsoft's own
+`cl.exe` under Wine; `cross-clangcl-release` runs `clang-cl` natively against the
+same headers and import libraries, which is faster.
+
+Both need a checkout of [msvc-cross] for the toolchain files and a Windows Qt kit
+-- `QT_ROOT_DIR` is the same variable `install-qt-action` sets in CI:
+
+```sh
+export MSVC_CROSS_ROOT=~/projects/msvc-cross
+export QT_ROOT_DIR=~/opt/Qt-win/6.8.3/msvc2022_64   # aqt install-qt windows desktop 6.8.3 win64_msvc2022_64
+. "$MSVC_CROSS_ROOT/env/msvc-env.sh"
+
+cmake --preset cross-cl-release
+cmake --build --preset cross-cl-release
+ctest --preset cross-cl-release
+```
+
+The whole suite passes under Wine, the Qt Quick rendering tests included --
+including the native-backend run, which draws through a real windowing system.
+That one holds because the suite pins Qt's software scene graph in both of its
+runs, for the same reason the application does: through the RHI, an unmapped
+window's Shapes take a new geometry and keep their old colour, and the deck's
+panel is exactly such a window. What varies between the two runs is the platform,
+not the renderer, so there is no GPU path left for Wine to translate.
+
+It is still not a substitute for the Windows CI job. Wine is not Windows, and a
+green cross build says the code compiles and behaves under Microsoft's own
+toolchain -- not that it behaves on the operating system.
+
+[msvc-wine]: https://github.com/mstorsjo/msvc-wine
+[msvc-cross]: https://github.com/christianparpart/msvc-cross
+
 ```sh
 ./out/build/clang-debug/src/ax310_app --verbose
 ```
+
+`--start-minimised` opens it into the taskbar rather than onto the desktop, for
+when it is being run alongside something else. Ctrl+C stops it the same way
+closing the window does, so the deck gets its shutdown sequence and the settings
+the handshake overwrote are put back.
+
+Under a sanitised preset the exit leak check is skipped when the interface drew
+through the GPU: the graphics driver leaks about 25 kB on this desktop with no
+frame of ours in any trace, and the same session under `QT_QUICK_BACKEND=software`
+reports nothing at all. That is where the check still applies, along with every
+test binary.
 
 **Attaching is not entirely side-effect-free.** Connecting replays a captured
 sequence that turns out to be somebody's saved configuration rather than an

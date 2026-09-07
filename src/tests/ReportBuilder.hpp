@@ -32,7 +32,7 @@ namespace ax310::testing
 class ReportBuilder
 {
   public:
-    /// Every real report the deck sends carries a set byte at offset 16, which
+    /// Every real report the deck sends carries a set byte at offset 0x11, which
     /// the decoder ignores but which is what distinguishes a real report from the
     /// all-zero filler the deck interleaves between them. Setting it by default
     /// keeps fixtures on the real side of that line.
@@ -154,7 +154,13 @@ class ReportBuilder
     static constexpr std::size_t AudioMetersOffset = protocol::AudioMetersOffset;
 
     /// A byte every real report sets and the filler leaves clear.
-    static constexpr std::size_t LiveMarkerOffset = 16;
+    ///
+    /// 0x11, counted from this project's own capture summary: across its 156
+    /// distinct reports byte 0x10 is zero in every one, and 0x11 carries 0x01 in
+    /// 146 of them. Neither byte is decoded, so a fixture setting the wrong one
+    /// still defeated the all-zero filter -- it just did not look like a report
+    /// the deck sends.
+    static constexpr std::size_t LiveMarkerOffset = 0x11;
 
     std::array<std::uint8_t, protocol::ControlReportSize> _bytes {};
 };
