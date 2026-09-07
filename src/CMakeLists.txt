@@ -156,6 +156,15 @@ if(AX310_BUILD_TESTS)
                                  PROPERTIES SKIP_RETURN_CODE 4)
         endif()
 
+        # Comments that narrate the code's own history go stale in a way nothing
+        # detects, because they were never true of the code in front of you. A
+        # written convention did not stop this project growing several; this does.
+        # Unlike its sibling it invokes nothing external, so it runs everywhere and
+        # has no skip path.
+        add_test(NAME "comments say what the code is, not what it was"
+                 COMMAND "${CMAKE_COMMAND}" -E env python3
+                         "${PROJECT_SOURCE_DIR}/scripts/check-comment-history.py")
+
         # A second run of the same binary, against the real scene graph.
         #
         # Everything above pins the software renderer, which is what lets it run

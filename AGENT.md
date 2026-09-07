@@ -19,6 +19,22 @@ being moved *towards*, and the current sources do not satisfy all of them yet.
 "Known deviations" at the end names each gap explicitly. **New code is held to
 the rules; touched code moves towards them.**
 
+## Comments say what the code is
+
+Never write what the code used to be, what a thing was called before, or what an
+earlier version of a comment claimed. Git records that, and a comment about a
+state the repository has left goes stale in a way nothing detects -- it was never
+true of the code in front of the reader.
+
+`scripts/check-comment-history.py` enforces this and runs as a CTest entry.
+
+The exception is not about code at all. A **refuted reading of the hardware** --
+"byte 4 is not brightness, and here is the capture that made it look like it was"
+-- stops the next reader deriving the same wrong answer from the same evidence,
+and this project has spent whole sessions on exactly that. Those belong in
+`.agent/rules/hardware-facts.md`, beside the evidence they warn about, not in a
+header where somebody is reading to find out what the code does.
+
 ## The hardware
 
 The deck presents **two USB devices at once** — `07ca:0310` and `07ca:1310` —

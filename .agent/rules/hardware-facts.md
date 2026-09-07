@@ -299,6 +299,28 @@ their observation and it is recorded as one rather than as a device fact: no
 measurement has separated it from an ordinary capacitive screen missing a light
 touch, and it is not the app, which was never running.
 
+## The panel's brightness: group 0x0a, not a property
+
+    01 0a <level>       write
+    81 0a 00 00         read, and the answer puts the level back in byte 2
+
+A group of its own, three bytes, and the level rides in the **address** slot
+rather than a value slot -- which is why there is no room for a value and why the
+length stays zero. Confirmed from both directions: writes of `19` and `64` matched
+the vendor slider at 25% and 100%, and a read during the vendor's startup answered
+`81 0a 64` while it was displaying 100%.
+
+`0xff` blanks the panel. The captured init writes `0xaa`, which is outside the
+25..100 the slider produces and is not the blanking sentinel; what it does is
+unknown.
+
+**A refuted reading worth keeping.** `0x1e` looks like screen brightness from the
+captures alone, and the case was strong: the init writes `0x0d` and the shutdown
+`0x09`, exactly the shape of a display being dimmed on the way out. It is not.
+On hardware that register dims the knob LED rings, and writing `0x01` extinguishes
+them. The screen's brightness was never in the property space at all, which is why
+searching the property addresses for it could only ever fail.
+
 ## The microphone registers: 0x1f, 0x20, 0x23
 
 Five one-action captures of the vendor software, all three addresses already in

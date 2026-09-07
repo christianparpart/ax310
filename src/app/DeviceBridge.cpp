@@ -452,9 +452,8 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
                        logTo(_logger,
                              LogLevel::Debug,
                              // Named by position, because what they measure is
-                             // not settled. An earlier version named six elements
-                             // of an array that had become two and read four ints
-                             // past the end of it.
+                             // not settled -- and indexed against the array's
+                             // actual extent, which is two and has been six.
                              "event: meters {} {}",
                              e.levels[0],
                              e.levels[1]);

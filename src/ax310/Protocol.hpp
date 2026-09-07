@@ -484,11 +484,11 @@ inline constexpr std::uint8_t MaxSurroundFrequency = 0x0a;
 /// **That is a fact about the vendor's software, not about the deck.** Driving the
 /// byte by hand produces colour effects on the strip that have not been
 /// characterised, so the deck does read it -- the vendor simply never varies it in
-/// a way a capture could show. An earlier version of this comment called the byte
-/// stale struct memory, which the captures could not have established.
+/// a way a capture could show. A capture can only ever show the first of those.
 ///
 /// This value is one of the resting ones, sent because replaying an observed shape
-/// is the rule this project writes under. See docs/todo.md.
+/// is the rule this project writes under. See docs/todo.md, and
+/// .agent/rules/hardware-facts.md for the readings this byte has survived.
 inline constexpr std::uint8_t SolidFrequencyAtRest = 0xf8;
 
 /// The range a colour channel spans as the vendor's brightness slider moves.
@@ -536,10 +536,9 @@ inline constexpr std::uint8_t MaxLightChannel = 0xff;
 /// is sent -- `0xff` down to `0x19` as the slider travels -- in solid exactly as in
 /// pulsing, and on the buttons and rings the same way. Use scaledChannel().
 ///
-/// An earlier reading of these bytes had byte 4 carrying brightness in Solid. It
-/// came from one capture in which brightness and byte 4 moved together, and three
-/// later captures refuted it: at both ends of the brightness slider byte 4 was
-/// `0xfb` while the colour moved the whole way. See SolidFrequencyAtRest.
+/// In Solid the byte carries something else again -- see SolidFrequencyAtRest --
+/// and it is not a brightness: at both ends of the vendor's slider it was `0xfb`
+/// while the colour travelled the whole way.
 ///
 /// @param mode Which animation.
 /// @param frequency How fast it animates. In Solid the deck does something else
@@ -574,9 +573,8 @@ inline constexpr std::uint8_t MaxLightChannel = 0xff;
 /// The display command group: `[0x01][0x0a][level]`, and that is the whole of it.
 ///
 /// A second family beside the property one, which is why the screen's brightness
-/// was never found among the property addresses -- it was never there. `0x1e` was
-/// once named for it on strong evidence from captures alone, and the hardware
-/// disagreed: that register dims the knob rings.
+/// is not among the property addresses. `0x1e` is the nearest-looking candidate
+/// there and dims the knob rings instead, established on hardware.
 ///
 /// Three captures of the vendor software settled the encoding between them, each
 /// sending exactly one command where an idle capture of the same length sends
@@ -734,9 +732,6 @@ enum class Property : std::uint8_t
     /// System, silences a System tone in the mix on the deck's second capture pair
     /// and leaves the first pair untouched. So the deck really does carry two
     /// independent six-track mixes.
-    ///
-    /// Historical note on the name: this address was long recorded as an
-    /// unexplained second array.
     ///
     /// Established by capturing the vendor software: enabling **Dual Mix** writes
     /// this array and nothing else writes it -- not disabling Dual Mix, not
