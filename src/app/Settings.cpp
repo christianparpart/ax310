@@ -129,13 +129,24 @@ void Settings::setEffects(EffectState const& state)
     auto const store = openStore(_filePath);
 
     for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
-        store->setValue(enabledKey(protocol::EffectEnables[index]), state.enabled[index]);
+    {
+        auto const command = protocol::EffectEnables[index];
+        store->setValue(enabledKey(command), state.enabled[index]);
+
+        // Taken out as it is replaced. Left in, the file would carry both
+        // spellings of every setting for exactly the people who already had one
+        // -- and the backslash keys this is here to be rid of would outlive it.
+        store->remove(foldedEnabledKey(command));
+    }
 
     for (auto const& info: protocol::Parameters)
     {
         auto const& chosen = state.parameters[protocol::indexOf(info.id)];
         if (chosen)
+        {
             store->setValue(parameterKey(info.id), *chosen);
+            store->remove(foldedParameterKey(info.id));
+        }
     }
 }
 

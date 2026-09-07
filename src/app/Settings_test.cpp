@@ -178,4 +178,14 @@ TEST_CASE("an effects chain stored under the folded keys still reads", "[setting
     auto const state = app::Settings { fixture.path }.effects();
     CHECK(state.enabled.front());
     CHECK(state.parameters[protocol::indexOf(protocol::Parameter::ReverbDamp)] == 33);
+
+    // Written back, the file keeps one spelling. Two would mean the keys this
+    // change exists to remove survive in every file that had them.
+    app::Settings { fixture.path }.setEffects(state);
+
+    QFile file { fixture.path };
+    REQUIRE(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    auto const contents = QString::fromUtf8(file.readAll());
+    INFO(contents.toStdString());
+    CHECK_FALSE(contents.contains(QLatin1Char('\\')));
 }
