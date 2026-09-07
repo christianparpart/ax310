@@ -302,9 +302,32 @@ captures name them.
   not located yet. Each found field is one row in `protocol::Parameters` and
   appears in both screens with no new code -- the deck panel's effects page and
   the desktop window are both built from that table.
-- **Single/Dual mix is not driven.** `0x21` takes `0x80` for Single and `0x00` for
-  Dual, always alongside `0x22` and inside the `0x1d` fence, but the same address
-  also selects which knob rings light and which of the two it is doing has never
-  been settled on the hardware. The panel's tile is held and marked unverified
-  rather than driven on a guess. One capture, or one careful write with the deck
-  in view, settles it.
+- **`MixId` has two enumerators and the deck has three states.** The deck can be
+  on the creator mix, on the audience mix, or not split at all -- one master mix,
+  which the vendor's interface calls Dual Mix. `MixId` names only the first two,
+  and `KnobLedSelectForMix` is indexed by it, so this driver cannot express the
+  third and cannot ask the deck to enter or leave it.
+
+  The captures say what all three are, read with `ax310_decode`, which now prints
+  the gaps as well:
+
+  | action | `0x21` | `0x22` |
+  | --- | --- | --- |
+  | switch to the audience mix | `0x01` | `0x01` |
+  | Dual Mix off (single creator) | `0x80` | `0x12` |
+  | Dual Mix on | `0x00` | `0x02` |
+
+  So `0x21` is a three-state register and `0x22` moves with it every time -- which
+  is the one write the vendor makes here that this driver deliberately does not,
+  on the grounds that the rings follow without it. That reasoning was about a
+  two-state switch and does not obviously carry to the third state.
+
+  What this wants is a type that can hold all three, rather than `MixId` plus a
+  separate flag: every table indexed by `MixId` -- the ring colours, the ring
+  selector, the level blocks -- has to answer for the master case, and a level
+  block is exactly what a master mix may not have. The panel's Dual Mix tile is
+  held and marked unverified, and stays that way until the shape is decided.
+
+- **Single/Dual mix is not driven.** The same address also selects which knob
+  rings light, and which of the two things it is doing has never been settled on
+  the hardware. One careful write with the deck in view settles it.
