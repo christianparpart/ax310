@@ -44,7 +44,10 @@ PATTERNS = [
 ]
 
 SOURCE_SUFFIXES = {".hpp", ".cpp"}
-SKIP_DIRECTORIES = {"out", "build", ".git", "_deps"}
+# ".claude" holds agent worktrees: whole second checkouts of this repository
+# living inside it. Walking into one checks another branch's files against this
+# branch's rules and reports them under a path nobody can act on from here.
+SKIP_DIRECTORIES = {"out", "build", ".git", ".claude", "_deps"}
 
 
 def sources(root: pathlib.Path) -> list[pathlib.Path]:
