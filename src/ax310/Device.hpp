@@ -193,12 +193,20 @@ class Device
     /// not light is not a reason to refuse the deck.
     void lightButtonsWithDefaults();
 
-    /// Waits until a level write would not crowd the one before it.
+    /// Sends one level write, no sooner than a gap after the last one.
     ///
     /// A dial sends one write per detent and the deck applies only some of a run
     /// sent back to back, so a fast turn lands on whichever of them it kept.
     /// Every other run of writes this driver sends is already spaced.
-    void spaceLevelWrites();
+    ///
+    /// Called with _paceMutex held, which is what keeps two threads from pacing
+    /// against the same instant and then writing together anyway.
+    ///
+    /// @param address Where to write.
+    /// @param values What to write.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> writeLevelSpaced(
+        std::uint8_t address, std::span<std::uint8_t const> values);
 
     /// Reads back the mix and the levels the deck came up holding, and puts the
     /// ring colour where that mix says it should be.
@@ -226,12 +234,17 @@ class Device
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> setLevel(MixId mix, KnobId knob, Level level);
 
+    /// Reports one track's level, if the deck has ever said what it is.
+    ///
+    /// A cache of the deck's own register and never a value of this driver's
+    /// own, which is why it can be empty: a read that failed leaves no level
+    /// here rather than a plausible one, and a caller that would otherwise draw
+    /// or write a fabricated number has to notice.
+    ///
     /// @param mix Which mix to report.
     /// @param knob Which track.
-    /// @return What the deck last said this level was, or what was last written
-    ///         to it. A cache of the deck's own register and never a value of
-    ///         this driver's own -- readLevels() is what fills it.
-    [[nodiscard]] Level level(MixId mix, KnobId knob) const;
+    /// @return The level, or nothing when no read or write has established it.
+    [[nodiscard]] std::optional<Level> level(MixId mix, KnobId knob) const;
 
     /// Reads every track's level in both mixes back from the deck.
     ///
@@ -252,8 +265,9 @@ class Device
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> selectMix(MixId mix);
 
-    /// @return Which mix the deck was last read to be monitoring, or last told
-    ///         to monitor.
+    /// Reports which mix the deck is monitoring.
+    ///
+    /// @return The mix it was last read to be on, or last told to move to.
     [[nodiscard]] MixId selectedMix() const;
 
     /// Reads which mix the deck is monitoring.
@@ -408,17 +422,22 @@ class Device
     MixId _mix = MixId::Creator;
 
     /// Every track's level in both mixes, as last read from the deck or last
-    /// written to it.
+    /// written to it. Empty where neither has happened.
     ///
     /// A cache of the deck's own registers rather than a state of this driver's:
     /// the deck reports a turn as a relative counter, so somebody has to hold the
     /// absolute value, but what that value *is* comes from the hardware. The
     /// rings display the selected mix's row, so this is also what the deck is
     /// showing.
-    std::array<std::array<Level, KnobCount>, MixCount> _levels {};
+    std::array<std::array<std::optional<Level>, KnobCount>, MixCount> _levels {};
 
-    /// When the last level write went out, so a run of them can be spaced.
-    /// Empty until one has.
+    /// Serialises level writes and the gaps between them, so two threads
+    /// dialling and dragging at once still leave the deck a run it will take.
+    /// Ordered before _writeMutex wherever both are held.
+    std::mutex _paceMutex;
+
+    /// When the last level write finished, so the next can be spaced from it.
+    /// Empty until one has. Guarded by _paceMutex.
     std::optional<std::chrono::steady_clock::time_point> _lastLevelWrite;
 
     /// Serialises writes: the host may push a frame from one thread while

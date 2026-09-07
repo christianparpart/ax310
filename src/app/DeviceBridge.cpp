@@ -140,8 +140,20 @@ void DeviceBridge::run()
             // Published on this thread, not the GUI's: connect() has just spent
             // twelve USB round trips reading these, and they belong to the
             // connect rather than to whoever asks first.
+            _levelsWantReading.store(false);
             publishDeviceState();
             continue;
+        }
+
+        if (_levelsWantReading.exchange(false))
+        {
+            if (auto const read = _device.readLevels(); !read)
+                logTo(_logger,
+                      LogLevel::Warning,
+                      "could not re-read the levels: {}",
+                      describe(read.error()));
+
+            publishDeviceState();
         }
 
         ++polls;
@@ -170,10 +182,29 @@ void DeviceBridge::publishDeviceState()
     {
         for (auto const knob: AllKnobs)
         {
-            auto const percent = _device.level(mix, knob).asPercent();
-            _levels[indexOf(mix)][indexOf(knob)] = percent;
-            emit levelChanged(
-                static_cast<int>(indexOf(mix)), static_cast<int>(indexOf(knob)), percent);
+            // A level the deck never answered for is left where it was. Drawing
+            // a track at silence because a read failed says something false
+            // about the hardware, and says it as confidently as a real reading.
+            auto const level = _device.level(mix, knob);
+            if (!level)
+            {
+                logTo(_logger,
+                      LogLevel::Debug,
+                      "the deck has not said what the {} mix's {} level is",
+                      nameOf(mix),
+                      nameOf(knob));
+                continue;
+            }
+
+            // Through rememberLevel like every other route, so what the deck
+            // says the microphone is at counts as a level it has been seen at.
+            rememberLevel(static_cast<int>(indexOf(mix)),
+                          static_cast<int>(indexOf(knob)),
+                          level->asPercent());
+
+            emit levelChanged(static_cast<int>(indexOf(mix)),
+                              static_cast<int>(indexOf(knob)),
+                              level->asPercent());
         }
     }
 }
@@ -260,7 +291,7 @@ void DeviceBridge::setLevel(int mix, int knob, int percent)
         return;
     }
 
-    _levels[static_cast<std::size_t>(mix)][static_cast<std::size_t>(knob)] = level.asPercent();
+    rememberLevel(mix, knob, level.asPercent());
     emit levelChanged(mix, knob, level.asPercent());
 }
 
@@ -279,13 +310,31 @@ void DeviceBridge::selectMix(int mix)
         return;
     }
 
-    // The levels are read back rather than assumed: the rings now display the
-    // other mix's row, and what that row holds is the deck's to say. Without this
-    // the interface would show the mix it just left.
-    if (auto const read = _device.readLevels(); !read)
-        logTo(_logger, LogLevel::Warning, "could not re-read the levels: {}", describe(read.error()));
+    // The levels want reading back rather than assuming: the rings now display
+    // the other mix's row, and what that row holds is the deck's to say. Asked
+    // for here and done by the worker, because it is a dozen USB round trips and
+    // this is the thread that has to draw the next frame.
+    _levelsWantReading.store(true);
 
+    // The mix itself is published now. The five writes it took have already been
+    // made, so the panel is repainting to something the deck has been told.
     publishDeviceState();
+}
+
+void DeviceBridge::rememberLevel(int mix, int knob, int percent)
+{
+    std::lock_guard<std::mutex> const lock { _levelsMutex };
+    _levels[static_cast<std::size_t>(mix)][static_cast<std::size_t>(knob)] = percent;
+
+    // What monitoring is restored to is any level this track has been seen at,
+    // not only one that setMicMonitor itself silenced. The Mute mic tile, a knob
+    // turned down to nothing and a push of that knob all reach zero by their own
+    // route, and after any of them a restore had nothing recorded and went to
+    // full scale -- louder than the person had it, which is the wrong way to be
+    // wrong, and a push of a physical knob is an easy accident.
+    if (percent > 0 && std::cmp_equal(mix, indexOf(MixId::Creator))
+        && std::cmp_equal(knob, indexOf(KnobId::Mic)))
+        _monitorRestoreLevel = percent;
 }
 
 int DeviceBridge::levelPercent(int mix, int knob) const
@@ -294,6 +343,7 @@ int DeviceBridge::levelPercent(int mix, int knob) const
         || std::cmp_greater_equal(knob, KnobCount))
         return 0;
 
+    std::lock_guard<std::mutex> const lock { _levelsMutex };
     return _levels[static_cast<std::size_t>(mix)][static_cast<std::size_t>(knob)];
 }
 
@@ -313,19 +363,24 @@ void DeviceBridge::setMicMonitor(bool enabled)
 {
     auto const creatorMix = static_cast<int>(indexOf(MixId::Creator));
     auto const micTrack = static_cast<int>(indexOf(KnobId::Mic));
-    auto const current = levelPercent(creatorMix, micTrack);
-
     if (!enabled)
     {
-        // Remember what is being silenced. Restoring to full instead would be
-        // louder than what the person had, which is the wrong way to be wrong.
-        if (current > 0)
-            _monitorRestoreLevel = current;
         setLevel(creatorMix, micTrack, 0);
         return;
     }
 
-    setLevel(creatorMix, micTrack, _monitorRestoreLevel > 0 ? _monitorRestoreLevel : 100);
+    // rememberLevel keeps the last level this track was actually seen at, so
+    // there is nothing to record here -- only something to put back.
+    //
+    // Read and the lock let go before the write, which takes it again on the way
+    // through rememberLevel.
+    int restore = 0;
+    {
+        std::lock_guard<std::mutex> const lock { _levelsMutex };
+        restore = _monitorRestoreLevel;
+    }
+
+    setLevel(creatorMix, micTrack, restore);
 }
 
 bool DeviceBridge::panelShowsEffects() const noexcept
@@ -505,7 +560,7 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
                        // interface's copy and announced.
                        auto const mix = static_cast<int>(indexOf(e.mix));
                        auto const knob = static_cast<int>(indexOf(e.knob));
-                       _levels[indexOf(e.mix)][indexOf(e.knob)] = e.volume;
+                       rememberLevel(mix, knob, e.volume);
                        emit levelChanged(mix, knob, e.volume);
                        emit knobVolumeChanged(e.knob, e.volume);
                    },

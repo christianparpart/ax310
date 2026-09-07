@@ -88,13 +88,16 @@ struct Harness
     }
 };
 
+/// What choosing a mix takes, pinned by its own case further down.
+constexpr std::size_t MixSwitchWrites = 5;
+
 /// What adopting the deck's own state costs a connect, in reports sent.
 ///
-/// One read for the mix it came up monitoring, and one per level in both mixes.
-/// The five writes a mix switch takes are not in here: a fake that does not
-/// answer the mix read leaves the driver with no mix to select, which is what
-/// the cases counting on this present.
-constexpr std::size_t StateAdoptionReads = 1 + (MixCount * KnobCount);
+/// One read for the mix it came up monitoring, the writes that choosing a mix
+/// takes -- made whether or not that read answered, because a mix nobody can
+/// read is settled rather than left to disagree with the deck -- and one read
+/// per level in both mixes.
+constexpr std::size_t StateAdoptionReads = 1 + MixSwitchWrites + (MixCount * KnobCount);
 
 /// @param frame The bytes to sum.
 /// @return The 16-bit unsigned sum the chunk header carries.
@@ -154,8 +157,10 @@ TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
     CHECK(harness.transport.sentCount(FakeHidTransport::Channel::FeatureReport)
           == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
                  + protocol::EffectEnables.size() + StateAdoptionReads + ButtonCount);
+    // The mix read and the twelve level reads; the writes beside them are sends,
+    // not reads.
     CHECK(harness.transport.featureReadCount()
-          == protocol::PreservedAddresses.size() + StateAdoptionReads);
+          == protocol::PreservedAddresses.size() + 1 + (MixCount * KnobCount));
 
     // One gap per handshake payload, and one more per button record: the deck
     // applies only some of a run of records sent back to back, so the four
@@ -1470,16 +1475,27 @@ TEST_CASE("every track resolves to its own register in both mixes", "[device][le
     Harness harness;
     harness.connectInControlMode();
 
-    for (auto const knob: AllKnobs)
+    for (auto const mix: AllMixes)
     {
-        INFO("the " << nameOf(knob) << " track");
-        harness.transport.clearSent();
-        REQUIRE(harness.device.setLevel(MixId::Creator, knob, Level::fromSteps(3)).has_value());
+        auto const base = mix == MixId::Creator
+                              ? std::to_underlying(protocol::Property::CreatorMixLevels)
+                              : std::to_underlying(protocol::Property::AudienceMixLevels);
 
-        // The first write is the level; the Mic adds a second, which the case
-        // below is about.
-        REQUIRE(!harness.transport.sent().empty());
-        CHECK(harness.transport.sent()[0].bytes[3] == 0x27 + indexOf(knob));
+        for (auto const knob: AllKnobs)
+        {
+            INFO("the " << nameOf(mix) << " mix's " << nameOf(knob) << " track");
+            harness.transport.clearSent();
+            REQUIRE(harness.device.setLevel(mix, knob, Level::fromSteps(3)).has_value());
+
+            // One write per track, and the address is base + track. The Mic in
+            // the creator mix is the single exception the deck asks for, and it
+            // is named here rather than left as slack in the count -- a stray
+            // extra write on any other track is a defect this must catch.
+            auto const expected =
+                (mix == MixId::Creator && knob == KnobId::Mic) ? std::size_t { 2 } : std::size_t { 1 };
+            REQUIRE(harness.transport.sent().size() == expected);
+            CHECK(harness.transport.sent()[0].bytes[3] == base + indexOf(knob));
+        }
     }
 }
 
@@ -1579,6 +1595,7 @@ TEST_CASE("the levels read back from the deck", "[device][level]")
         auto const step = static_cast<int>(indexOf(knob)) + 1;
         CHECK(harness.device.level(MixId::Creator, knob) == Level::fromSteps(step));
         CHECK(harness.device.level(MixId::Audience, knob) == Level::fromSteps(step + 10));
+        
     }
 }
 
@@ -1591,10 +1608,11 @@ TEST_CASE("a level written to the deck is what the driver then holds", "[device]
     // that succeeds moves it and a knob turn afterwards starts from there.
     REQUIRE(harness.device.setLevel(MixId::Audience, KnobId::System, Level::fromPercent(70))
                 .has_value());
-    CHECK(harness.device.level(MixId::Audience, KnobId::System).asPercent() == 70);
+    REQUIRE(harness.device.level(MixId::Audience, KnobId::System).has_value());
+    CHECK(harness.device.level(MixId::Audience, KnobId::System)->asPercent() == 70);
 
     // And the other mix is untouched, because they are separate registers.
-    CHECK(harness.device.level(MixId::Creator, KnobId::System).asPercent() != 70);
+    CHECK(harness.device.level(MixId::Creator, KnobId::System) != Level::fromPercent(70));
 }
 
 TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]")
