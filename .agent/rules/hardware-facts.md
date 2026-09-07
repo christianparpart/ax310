@@ -382,9 +382,10 @@ Fourteen records of the vendor software, one action each.
   `ff 00 00`, `00 ff 00`, `00 00 ff`.
 * **Byte 8 lights it**: `0x1f` on, `0x00` off. Off writes black *and* clears this,
   so a colour of zero on its own is not what the vendor sends.
-* **Bytes 6 and 7 are not understood and are not part of the colour.** Two records
-  with the same button and the same colour differ in them, so they are neither a
-  checksum of the record nor derived from it.
+* **Bytes 6 and 7 are not understood, and they are not inert.** Two records with
+  the same button and the same colour differ in them, so they are neither a
+  checksum of the record nor derived from it. They are not passive either --
+  see below.
 
 **There is no brightness field.** The vendor scales the colour host-side: its
 slider at minimum sent `0x19` on the lit channel and at maximum `0xff`. `0x19` is
@@ -397,16 +398,149 @@ slider at minimum sent `0x19` on the lit channel and at maximum `0xff`. `0x19` i
 
 so `FirstButtonSelector + index` lights the wrong two and the mapping is a table.
 
-The colour path has since been driven on hardware with `ax310_probe --button` and
-the result accepted, so the selector table is confirmed **in the output
-direction**: naming a button lights that button.
+The selector table is confirmed **in the output direction**, by driving all four
+in one pass to red, green, blue and yellow and reading the deck: each colour
+appeared under the button the table names. One pass rather than four, so the
+answer cannot be an artefact of writes landing out of order -- and four
+consecutive records at `0xc0` all take effect, with no pacing needed between
+them.
 
-That says nothing about the input direction. `ButtonBits` runs `0x08, 0x04, 0x02,
-0x01` -- reversed against `Button`'s order, for no recorded reason -- and is a
-separate table that no test has touched. It is now easy to settle, though, and
-without a VM: light one button a colour the others do not have, press it, and see
-which bit arrives. The output mapping being confirmed is what makes that
-unambiguous, because it identifies the button being pressed.
+### Records sent back to back are not all applied
+
+The shutdown sequence darkens the four buttons with four records to `0xc0`, one
+per selector, and sent with no gap between them the deck applies only some: a
+shutdown leaves one button still lit, and which one differs between runs. There is
+nothing wrong with the records -- the same bytes work when they are spaced.
+
+The handshake already carries a 10 ms gap per payload, with the note that the deck
+does not come back without it. Given the same gap the shutdown leaves exactly the
+state it asks for, checked by lighting all four buttons first so a record that
+failed to land would be visible.
+
+So the pacing is not a property of the handshake, it is a property of the deck.
+Anything sending a run of records should space them, and a burst to one address is
+where it shows first.
+
+### Bytes 6 and 7 decide whether a colour lights at all
+
+The vendor's initialisation writes all four buttons and **only two of them light**:
+the two it writes `ff 00 00`. The two it writes `00 37 ff` stay dark. Both records
+are otherwise identical in shape, and both carry `f9 3d` in bytes 6 and 7.
+
+Driving the same selector with the same `00 37 ff` and `00 1d` in that pair --
+one byte pair changed, nothing else -- lights it blue. So:
+
+| colour | bytes 6,7 | result |
+| --- | --- | --- |
+| `ff 00 00` | `f9 3d` | lit, red |
+| `00 37 ff` | `f9 3d` | **dark** |
+| `00 37 ff` | `00 1d` | lit, blue |
+
+The pair therefore gates or shifts a colour rather than riding alongside it. It is
+not a simple on/off, because red lights under `f9 3d` and blue does not.
+
+`0xf9` there is worth holding beside two other unexplained bytes with the same
+look: byte 6 of a knob-ring record is `0xf8`, and byte 4 of a surround record is
+`0xf8` at rest -- the one whose effects were described as "interesting colour
+effects that I cannot describe yet". Whether the three are one field is untested.
+
+**What this means for writing code:** use `buttonColourRecord()`, whose pair is a
+combination observed lighting a button, and do not copy bytes 6 and 7 out of a
+capture. `DefaultButtonColours` goes out through that builder at every connect,
+which is why all four light where the vendor's own replay leaves two dark.
+
+### The input direction, settled the same way
+
+`ax310_probe --inputs` lights one button at a time and reads the byte that
+arrives, so a press is identified by the light rather than by the table being
+checked. Confirmed on the deck, at report offset `0x00`:
+
+| button | bit |
+| --- | --- |
+| top-left | `0x08` |
+| top-right | `0x04` |
+| bottom-left | `0x02` |
+| bottom-right | `0x01` |
+
+which is `ButtonBits` as written -- backwards against `Button`'s order, and that
+is simply what the hardware does.
+
+The knob pushes, at offset `0x06`, are `KnobBits` as written: `0x01` Mic, `0x02`
+Line In, `0x04` Console, `0x08` System, `0x10` Game, `0x20` Chat. The knobs cannot
+be lit one at a time -- the ring record colours all six -- so their identity comes
+from the legend printed on the deck, and the walk takes the pushes in the order
+they arrive rather than asking for one per round.
+
+Two more things the same walk settled:
+
+* **A release is reported**, roughly 300 ms after the press, as a report with the
+  byte back to zero. That is what lets the driver's rising edge re-arm; without it
+  every second press of the same button would be lost.
+* **Two buttons held together arrive as one report with both bits set** -- `0x09`
+  for top-left and bottom-right. The bitmask reading is what the hardware does.
+
+**A trap worth keeping, because it cost three runs.** A walk that asks for one
+press per round is only as good as the pacing of the person at the deck: a press
+landing just after its round's deadline satisfies the *next* round, and every
+later press is then credited to the wrong control. Read that way, one slow start
+reported `bottom-left` as `0x08`, which is `top-left`'s bit. Two controls cannot
+share a bit, so a repeat in the results is a mis-press rather than a finding --
+the tool checks for that now and refuses to publish a verdict from such a walk.
+
+The cue matters as much as the check. The lit button is what tells somebody at the
+deck what to press, and the walk's phases are told apart by the lights alone:
+one lit, then all four dark, then all four lit. Writing the newly lit button
+*after* darkening the others makes every transition flash all-four-dark, which is
+the next phase's cue -- so the lit one is written first.
+
+## Switching the mix takes three writes, not one
+
+`SelectedMix` (`0x15`) alone moves the audio. It does **not** move the knob rings:
+they keep the colour and the levels of the mix that was on before, which from the
+desk looks exactly like a switch that did not happen -- the audio changes, the
+panel's rendering changes, the hardware does not.
+
+The vendor's own switch, captured whole, is one settings transaction:
+
+    SET 0x1d = 01     begin
+    SET 0x1e = 0d     knob LED brightness, already at that value
+    SET 0xc0 = 01 c0 0a ff 7d 00 fd 00 1f 80    ring colour, orange
+    SET 0x21 = 01     KnobLedSelect
+    SET 0x22 = 01     unrecorded
+    SET 0x27 = 14     the creator mix's Mic level
+    SET 0x15 = 01     SelectedMix = audience
+    SET 0x1d = 00     end
+
+Three of those are the switch. The ring **colour** has to be written because the
+record carries no mix -- the deck applies it to whichever mix is selected -- so a
+switch that does not say the new colour leaves the old one glowing. `0x21` is what
+moves the **levels** the rings display. `0x15` moves the audio.
+
+Reading `0x21` across three captures gives both directions, and one byte carrying
+two things:
+
+| action | `0x21` | ring colour | `0x15` |
+| --- | --- | --- | --- |
+| switch to the audience mix | `0x01` | `ff 7d 00` orange | `0x01` |
+| Dual Mix on | `0x00` | `00 7d ff` blue | `0x00` |
+| Dual Mix off, back to single | `0x80` | `00 7d ff` blue | `0x00` |
+
+so `0x80` is a single creator mix, `0x01` a single audience mix, `0x00` Dual Mix --
+and `0x80` is what init writes, which is why a freshly attached deck monitors the
+creator mix.
+
+**Confirmed on the hardware:** with the colour, `0x21` and `0x15` inside one fence,
+both the ring colour and the ring levels follow the switch in both directions.
+
+Two writes in the vendor's sequence are deliberately not replayed. `0x27 = 0x14`
+is the creator mix's Mic level -- somebody's setting caught in the capture, and
+replaying it would overwrite the level the person at the deck had chosen. `0x22`
+has no recorded meaning; the rings follow without it, so it stays unwritten until
+something shows what it does.
+
+The order is the vendor's: the colour goes out *before* the switch and still lands
+on the mix being switched to. The fence is presumably what makes that work, and
+that is an assumption rather than a measurement.
 
 ## The knob rings' colour: the same 0xc0, with byte 0 choosing the bank
 

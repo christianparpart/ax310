@@ -232,16 +232,58 @@ captures name them.
   An earlier entry closed this as stale struct memory. That conclusion was drawn
   from captures, which can only show what the vendor's software writes, never what
   the deck does with what it receives.
+- **Bytes 6 and 7 of a button-colour record gate the colour**, and this is now
+  measured rather than suspected. The vendor's own initialisation lights only two
+  of its four buttons: the two it writes `ff 00 00`. The two it writes `00 37 ff`
+  stay dark, and both carry `f9 3d` in that pair. Changing only the pair, to the
+  `00 1d` that `buttonColourRecord()` sends, lights the same colour on the same
+  button. So red survives `f9 3d` and blue does not, which is not a simple enable.
+
+  Hold this next to the entry above: `0xf9` here, `0xf8` in byte 6 of a knob-ring
+  record, and `0xf8` in byte 4 of a surround record are three unexplained bytes of
+  the same shape in the same family of records. One sweep that steps the pair with
+  the colour held fixed, on a button and on the strip, may answer all three at
+  once. No VM needed.
 - ~~**The surround record's channel order is unverified.**~~ Settled on hardware:
   `ff 00 00` is red, so bytes 7-9 are R-G-B as written.
+- ~~**Which selector is which physical button.**~~ Settled on hardware: all four
+  driven in one pass to red, green, blue and yellow, each appearing under the
+  button `ButtonColourSelectors` names. Four consecutive records at `0xc0` all
+  land, with no pacing between them. The input direction -- whether `ButtonBits`
+  matches -- is still open, and is now a one-press experiment.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries
   no mix, so setting the audience mix's colour means selecting it, writing, and
   selecting back. Whether the deck keeps both colours or the driver must is
   untested; the colour path itself is confirmed on hardware.
-- **`ButtonBits` is unverified** — `0x08, 0x04, 0x02, 0x01`, reversed against
-  `Button`'s order for no recorded reason. Now cheap to settle, and without a VM:
-  the colour path is confirmed, so lighting one button a unique colour identifies
-  which button a press came from. Wants a probe mode that prints the arriving bit.
+- ~~**`ButtonBits` is unverified.**~~ Settled with `ax310_probe --inputs`, which
+  lights one button at a time and reads the arriving byte, so the press is
+  identified by the light rather than by the table under test. `0x08, 0x04, 0x02,
+  0x01` is right; the reversal against `Button`'s order is what the hardware does.
+  `KnobBits` was confirmed in the same walk, and two behaviours with it: a release
+  is reported about 300 ms after the press, and two buttons held together arrive
+  as one report with both bits set.
+
+  Worth remembering from how long it took: asking for one press per round makes
+  the result depend on the pacing of somebody who cannot see the terminal, and a
+  press that misses its round is credited to the next control. The walk now retries
+  a round rather than advancing, takes the knob pushes in arrival order, and
+  refuses a verdict when two rounds report the same bit — which two controls
+  cannot do, so it means a mis-press rather than a finding.
+- **The shutdown sequence does not stop the report stream.** `--inputs` was run
+  against a deck the driver had already shut down, and reports still arrived --
+  so the probe's watch modes need the deck woken once, not the driver left
+  running. What a *cold* deck does is unchanged and still the documented case:
+  no reports until the handshake. Worth pinning down what the shutdown sequence
+  actually stops, since it is the closest thing to the "wake without configuring"
+  command that is still missing.
+- **The mix colours should be configurable.** Today `protocol::MixRingColours`
+  holds one pair -- the deck's own `#007DFF` and `#FF7D00` -- and the QML theme is
+  held to it by a test, so the rings and the panel cannot disagree. What is not
+  there is any way for somebody to choose their own. That wants a settings store,
+  which this project does not have at all yet: where user configuration lives and
+  how it persists is the decision to make first, and the mix colours are only its
+  first customer. The knob-ring colour is per mix on the hardware too, so the
+  driver already has the shape for it.
 - **Nothing in the GUI reaches the lights** — button colours, ring colour and the
   surround strip are all driven by hand through `ax310_probe`. They are the first
   device features with no interface at all rather than a partial one.
