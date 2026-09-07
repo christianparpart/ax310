@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -352,12 +353,15 @@ inline constexpr std::uint8_t ButtonColourAddress = 0xc0;
 /// which is clockwise, where Button is row-major. `FirstButtonSelector + index`
 /// would light the wrong two, so the mapping is a table.
 ///
-/// A caveat worth keeping: these are the positions the *vendor's* grid gives them.
-/// Whether Button's own enumerators match the deck's physical layout has never
-/// been verified -- ButtonBits runs 0x08, 0x04, 0x02, 0x01, reversed for no
-/// recorded reason -- so this maps a vendor label to a selector, and the last link
-/// to a physical button is still assumed. Pressing each button and watching which
-/// bit arrives would close it.
+/// Confirmed against the deck rather than inferred from the vendor's labels: all
+/// four were driven in one pass to red, green, blue and yellow, and each colour
+/// appeared under the button this table names. One pass rather than four, so the
+/// answer cannot be an artefact of writes landing in the wrong order.
+///
+/// This settles the output direction, and it is what settled the input direction
+/// as well: `ax310_probe --inputs` lights one button at a time and reads the byte
+/// that arrives, so the press is identified by the light rather than by the table
+/// being checked. See ButtonBits.
 inline constexpr std::array<std::uint8_t, ButtonCount> ButtonColourSelectors {
     0x3c, // TopLeft
     0x3d, // TopRight
@@ -1668,10 +1672,49 @@ inline constexpr std::size_t KnobLedLevelOffset = 4;
 inline constexpr int MaxKnobLedLevel = 20;
 
 /// Bit representing each Button in PhysicalButtonEvent::buttons, indexed by Button.
+///
+/// Confirmed against the deck with `ax310_probe --inputs`, which lights one button
+/// at a time and reads the byte that arrives -- so the identity comes from the
+/// light rather than from this table. The order runs backwards against the enum's,
+/// and that is simply what the hardware does.
+///
+/// Two buttons held together arrive as one report with both bits set: `0x09` for
+/// top-left and bottom-right. And a release is reported, roughly 300 ms after the
+/// press, which is what lets Device::dispatchEvent's rising edge re-arm.
 inline constexpr std::array<std::uint8_t, ButtonCount> ButtonBits { 0x08, 0x04, 0x02, 0x01 };
 
 /// Bit representing each knob in InputReport::knobPush and ::knobTouch, indexed by KnobId.
+///
+/// Confirmed by the same walk. The knobs cannot be lit one at a time -- the ring
+/// record colours all six at once -- so their identity comes from the legend
+/// printed on the deck, and the walk takes the pushes in the order they arrive
+/// rather than asking for one per round.
 inline constexpr std::array<std::uint8_t, KnobCount> KnobBits { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20 };
+
+/// Every control's bit is its own, and every one is a single bit.
+///
+/// The masks are how a report is read apart, so a duplicate or a two-bit row would
+/// make one control answer for another silently. It is also what the hardware says:
+/// four buttons and six knobs each produced a different single bit.
+/// @param bits A table of bitmasks.
+/// @return Whether every row is a distinct single bit.
+template <std::size_t N>
+[[nodiscard]] consteval bool everyRowIsOneOwnBit(std::array<std::uint8_t, N> const& bits)
+{
+    for (std::size_t row = 0; row < N; ++row)
+    {
+        if (std::popcount(bits[row]) != 1)
+            return false;
+        for (std::size_t other = row + 1; other < N; ++other)
+            if (bits[row] == bits[other])
+                return false;
+    }
+
+    return true;
+}
+
+static_assert(everyRowIsOneOwnBit(ButtonBits), "two buttons cannot share a bit");
+static_assert(everyRowIsOneOwnBit(KnobBits), "two knobs cannot share a bit");
 
 /// Mask covering the four physical buttons, derived from the table above rather
 /// than written out, so a fifth button is one more row and nothing else.

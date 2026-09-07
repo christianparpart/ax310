@@ -390,6 +390,11 @@ TEST_CASE("a button bit decodes to the button's identity, not to its mask", "[de
     harness.transport.queueRead(ReportBuilder {}.build()); // Seed (a real report, not filler).
     REQUIRE(harness.device.poll(100ms).has_value());
 
+    // Written out rather than read from protocol::ButtonBits, so this checks the
+    // decode against the mapping confirmed on the deck instead of checking the
+    // table against itself. `ax310_probe --inputs` is what measured these: it
+    // lights one button and reads the byte that arrives, so the press is
+    // identified by the light rather than by the table.
     auto const [bit, expected] = GENERATE(table<std::uint8_t, Button>({
         { 0x08, Button::TopLeft },
         { 0x04, Button::TopRight },
@@ -419,6 +424,44 @@ TEST_CASE("a button release produces nothing", "[device][decode]")
     // Only the press: the deck has no release event and the driver does not
     // invent one.
     CHECK(harness.listener.count<ButtonPressed>() == 1);
+}
+
+TEST_CASE("all four buttons at once report all four", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+    harness.transport.queueRead(ReportBuilder {}.build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // The deck really does combine them: two held together arrive as one report
+    // carrying both bits, measured as 0x09 for top-left and bottom-right. Four is
+    // the same thing taken to its end, and it is what PhysicalButtonMask covers.
+    harness.transport.queueRead(ReportBuilder {}.buttons(protocol::PhysicalButtonMask).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ButtonPressed>() == ButtonCount);
+    for (auto const button: AllButtons)
+    {
+        INFO("the " << nameOf(button) << " button");
+        CHECK(harness.listener.nth<ButtonPressed>(indexOf(button)).button == button);
+    }
+}
+
+TEST_CASE("a button already down in the first report is reported as a press", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // poll() seeds the knob fields from the first report so a deck that is
+    // already being touched does not announce everything at once, and it
+    // deliberately does not seed the buttons: a button cannot be held across a
+    // connect the way a knob can be rested on, so the first report showing one
+    // down is somebody pressing it.
+    harness.transport.queueRead(ReportBuilder {}.buttons(0x08).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<ButtonPressed>() == 1);
+    CHECK(harness.listener.nth<ButtonPressed>().button == Button::TopLeft);
 }
 
 TEST_CASE("holding one button and adding another reports only the new one", "[device][decode]")

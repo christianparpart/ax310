@@ -430,7 +430,7 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
     // event that was never decoded in the first place.
     std::visit(Overloaded {
                    [this](ButtonPressed const& e) {
-                       logTo(_logger, LogLevel::Debug, "event: button {}", indexOf(e.button));
+                       logTo(_logger, LogLevel::Debug, "event: button {}", nameOf(e.button));
                    },
                    [this](KnobPushed const& e) {
                        logTo(_logger, LogLevel::Debug, "event: knob {} pushed", indexOf(e.knob));
