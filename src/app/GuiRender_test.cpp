@@ -305,6 +305,37 @@ TEST_CASE("the panel is drawn in the colour of the mix being edited", "[gui][ren
     CHECK(audienceOrange > audienceBlue);
 }
 
+TEST_CASE("the mix that is not being edited is drawn in its own colour", "[gui][render][mix]")
+{
+    RenderHarness harness;
+
+    // Every track carries a level in both mixes, so every gauge has an outer arc
+    // to draw. The two sets differ per track, so the arcs cannot coincide.
+    harness.connectWithLevels({ 15, 8, 14, 20, 18, 13 }, { 6, 16, 4, 11, 9, 20 });
+
+    auto const hueOf = [](MixId mix) {
+        auto const& colour = protocol::MixRingColours[indexOf(mix)];
+        return QColor(colour.red, colour.green, colour.blue).hue();
+    };
+
+    // The thin outer arc is the other mix, and drawing it in the *edited* mix's
+    // colour is what made it useless: both arcs then said the same thing and a
+    // person had to switch to read the other mix. So each screen has to carry
+    // both hues, not just the one it is in.
+    auto const creator = harness.renderPanel();
+    auto const creatorOther = pixelsNearHue(creator, hueOf(MixId::Audience));
+    UNSCOPED_INFO("the creator panel carries " << creatorOther << " audience-coloured pixels");
+    CHECK(creatorOther > 100);
+
+    harness.bridge.selectMix(1);
+    RenderHarness::settle();
+
+    auto const audience = harness.renderPanel();
+    auto const audienceOther = pixelsNearHue(audience, hueOf(MixId::Creator));
+    UNSCOPED_INFO("the audience panel carries " << audienceOther << " creator-coloured pixels");
+    CHECK(audienceOther > 100);
+}
+
 TEST_CASE("the interface and the deck's rings agree on the mix colours", "[gui][mix]")
 {
     // Two palettes for one piece of state is how they came to disagree: a mix

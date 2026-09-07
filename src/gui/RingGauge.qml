@@ -8,8 +8,8 @@ import AX310.App
 /// The physical control is a knob inside an LED ring, so a vertical fader would
 /// misrepresent the instrument. Four concentric arcs, outermost first:
 ///
-///   - the **other mix**, thin and dim, so both mixes are readable per track
-///     without switching between them;
+///   - the **other mix**, thin and in that mix's own colour, so both mixes are
+///     readable per track without switching between them;
 ///   - the **active mix**, thick, in that mix's colour;
 ///   - the **live meter**, with a peak-hold tick that decays.
 ///
@@ -37,6 +37,13 @@ Item {
 
     /// The colour of the mix being edited.
     property color accent: Theme.creator
+
+    /// The colour of the mix that is not being edited.
+    ///
+    /// Its own colour rather than a dimmed accent: the outer arc exists so both
+    /// mixes are readable per track, and an arc in the colour of the mix it is
+    /// not showing says nothing a person can use.
+    property color otherAccent: Theme.audience
 
     /// What the deck prints under this knob.
     property string label: ""
@@ -99,7 +106,7 @@ Item {
                 }
             }
             ShapePath {
-                strokeColor: Qt.alpha(gauge.accent, 0.30)
+                strokeColor: Qt.alpha(gauge.otherAccent, 0.55)
                 strokeWidth: 2.5 * gauge._unit
                 fillColor: "transparent"
                 capStyle: ShapePath.FlatCap
@@ -109,6 +116,7 @@ Item {
                     startAngle: gauge.arcStart
                     sweepAngle: gauge.arcSweep * gauge.otherLevel / 100
                 }
+                Behavior on strokeColor { ColorAnimation { duration: Theme.mixTransition } }
             }
 
             // The signal on this track.
