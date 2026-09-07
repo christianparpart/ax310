@@ -29,6 +29,33 @@ namespace ax310
 /// It owns no thread either. poll() performs exactly one read cycle, and
 /// whoever wants a loop provides one; that keeps the threading policy with the
 /// host, which is the only place that knows what else is running.
+/// The effects chain's state, as much of it as this driver can name.
+///
+/// A value type rather than a series of calls, so it can be held, compared and
+/// stored whole -- the interface keeps one of these between runs and the driver
+/// puts it back after a connect, which is what stops the deck starting in
+/// whatever state the last program to touch it left behind.
+struct EffectState
+{
+    /// Whether each of protocol::EffectEnables is on, in that table's order.
+    ///
+    /// Default is every effect off. That is the only starting point this project
+    /// can define without guessing somebody's taste, and it is the harmless one:
+    /// an unprocessed signal, rather than a stranger's reverb.
+    std::array<bool, protocol::EffectEnables.size()> enabled {};
+
+    /// One entry per protocol::Parameter, set only where somebody chose a value.
+    ///
+    /// Per parameter rather than all-or-nothing, and this is the whole point.
+    /// Every parameter belongs to a framed command whose body carries far more
+    /// than that parameter, so writing one writes the lot -- and the bodies this
+    /// driver edits from are protocol::FramedDefaults, which are the captured
+    /// vendor payloads for reverb and the compressor. Handing back a full block
+    /// of values nobody chose therefore re-imposes exactly the microphone chain
+    /// that was taken out of the handshake, through the door marked settings.
+    std::array<std::optional<int>, protocol::ParameterCount> parameters {};
+};
+
 class Device
 {
   public:
@@ -110,6 +137,60 @@ class Device
     /// @param percent Brightness, 0 to 100.
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> setKnobLedBrightness(int percent);
+
+    /// Lights one function button in a colour.
+    ///
+    /// There is no brightness field: the level is baked into the channels before
+    /// they are sent, which is what protocol::scaledChannel is for.
+    ///
+    /// @param button Which button.
+    /// @param red Red, 0 to 255, at the brightness wanted.
+    /// @param green Green.
+    /// @param blue Blue.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> setButtonColour(Button button, std::uint8_t red,
+                                                                   std::uint8_t green,
+                                                                   std::uint8_t blue);
+
+    /// What the effects chain is to be put into after a connect.
+    ///
+    /// Held rather than applied at once: a connect is where it lands, because the
+    /// deck may not be attached yet and because that is the moment the state would
+    /// otherwise be inherited from whatever ran before.
+    ///
+    /// @param state What the chain should be.
+    void setEffectState(EffectState const& state);
+
+    /// @return The chain as this driver last set it: the enables from what was
+    ///         asked for, the parameters from the cache the writes go through.
+    [[nodiscard]] EffectState effectState() const;
+
+    /// Switches one effect on or off and remembers that it did.
+    /// @param command One of protocol::EffectEnables.
+    /// @param enabled Whether it should be on.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> setEffectEnabled(protocol::FramedCommand command,
+                                                                    bool enabled);
+
+    /// Puts the effects chain into the state setEffectState was given.
+    ///
+    /// Part of a connect. The handshake carries no microphone chain, so the deck
+    /// keeps whatever the last program to touch it configured -- which on a deck
+    /// the vendor software has run is that software's settings. This is what makes
+    /// the starting state a decision rather than an inheritance.
+    ///
+    /// The noise gate is not included: no enable for it has been captured, only
+    /// parameter blocks. Failures are logged rather than returned, for the reason
+    /// lightButtonsWithDefaults gives.
+    void applyEffectState();
+
+    /// Lights all four buttons with protocol::DefaultButtonColours, at
+    /// protocol::DefaultButtonBrightnessPercent.
+    ///
+    /// Part of a connect, because the captured initialisation leaves two of the
+    /// four dark. Failures are logged rather than returned: a button that would
+    /// not light is not a reason to refuse the deck.
+    void lightButtonsWithDefaults();
 
     /// Pushes one JPEG frame to the device's screen, chunked as the deck wants.
     /// @param frame The encoded frame.
@@ -265,6 +346,14 @@ class Device
     /// the cache starts in agreement with the device. It has to be a cache: the
     /// framed family cannot be read back, so editing one field of a body means
     /// remembering the other twenty.
+    /// What the effects chain is put into on connect. Defaults to everything off.
+    EffectState _effectState {};
+
+    /// Which parameters somebody has actually chosen a value for. Nothing else
+    /// is stored or restored, because a parameter nobody set has no value worth
+    /// putting back -- only a default that writing would impose.
+    std::array<bool, protocol::ParameterCount> _parameterChosen {};
+
     std::array<protocol::FramedDefault, protocol::FramedDefaults.size()> _framedBodies =
         protocol::FramedDefaults;
 

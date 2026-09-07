@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <ios>
+#include <iterator>
 #include <span>
 #include <string>
 #include <utility>
@@ -218,12 +219,34 @@ TEST_CASE("a property write is built the way the vendor builds it", "[protocol][
 {
     // The strongest check available without the hardware: the command model must
     // reproduce, byte for byte, what the captured init sequence actually sends.
-    // InitPayloads[51] is the LED write -- six knobs at 0x0a.
+    // The payload wanted is the one writing all six creator levels at once.
+    //
+    // Found by its address rather than by its index. An index is a number that
+    // means nothing on its own and goes stale the moment a payload is added or
+    // taken out of the sequence -- which is what happened when the microphone
+    // chain was removed from it.
     std::array<std::uint8_t, protocol::KnobPropertyLength> const levels { 0x0a, 0x0a, 0x0a, 0x0a,
                                                                           0x0a, 0x0a, 0x00 };
     auto const built = protocol::setProperty(protocol::Property::CreatorMixLevels, levels);
 
-    auto const& captured = commands::InitPayloads[51];
+    // The position rather than the iterator, and never named as one: a
+    // std::array iterator is a raw pointer in libstdc++ and a class type in
+    // MSVC's library, so a variable holding it is either `auto const*`, which
+    // MSVC cannot deduce, or `auto`, which readability-qualified-auto rejects on
+    // libstdc++. An index is neither.
+    auto const index = static_cast<std::size_t>(
+        std::distance(commands::InitPayloads.begin(),
+                      std::ranges::find_if(commands::InitPayloads, [](auto const& payload) {
+                          return payload[0] == static_cast<std::uint8_t>(protocol::CommandKind::Set)
+                                 && payload[1] == protocol::PropertyGroup
+                                 && payload[2]
+                                        == static_cast<std::uint8_t>(protocol::Property::CreatorMixLevels)
+                                 && payload[3] == protocol::KnobPropertyLength;
+                      })));
+
+    REQUIRE(index < commands::InitPayloads.size());
+
+    auto const& captured = commands::InitPayloads[index];
     INFO("built    " << std::hex << int { built[0] } << " " << int { built[1] } << " " << int { built[2] }
                      << " " << int { built[3] });
     INFO("captured " << std::hex << int { captured[0] } << " " << int { captured[1] } << " "
@@ -283,9 +306,12 @@ TEST_CASE("the framed command family checksums every captured command", "[protoc
 
         ++checked;
     }
-    // Every one of them is in the init sequence; the shutdown sequence uses only
-    // property commands.
-    CHECK(checked == 24);
+    // All three are in the init sequence; the shutdown sequence uses only property
+    // commands. It was twenty-four until the captured microphone chain came out
+    // of the handshake -- twenty-one of those framed commands were one person's
+    // effect settings, and what is left is the commit the sequence sends three
+    // times.
+    CHECK(checked == 3);
 }
 
 TEST_CASE("every captured property command agrees with the model", "[protocol][commands]")

@@ -213,6 +213,20 @@ std::expected<ConnectionState, DeviceError> Device::connect()
 
     restoreProperties(snapshot);
 
+    // The handshake carries no microphone chain, so the deck keeps whatever the
+    // last program to touch it configured -- which on a deck the vendor software
+    // has run is that software's settings. Applying a state of our own is what
+    // makes the chain start where this project puts it.
+    applyEffectState();
+
+    // The captured sequence lights two of the four buttons and leaves the other
+    // two dark: it writes those two a blue that the byte pair it carries does not
+    // show. It also imposes whichever colours the person whose session was
+    // captured had chosen, which is not a default this project should ship. Four
+    // of our own go on afterwards, so the deck comes up with every button lit and
+    // each one tellable from its neighbours.
+    lightButtonsWithDefaults();
+
     _isSeeded = false;
     publishState(ConnectionState::Connected);
     return ConnectionState::Connected;
@@ -450,6 +464,7 @@ std::expected<void, DeviceError> Device::setParameter(protocol::Parameter parame
 
     auto& entry = _framedBodies[*slot];
     auto const clamped = std::clamp(value, info.minimum, info.maximum);
+    _parameterChosen[indexOf(parameter)] = true;
 
     switch (info.encoding)
     {
@@ -557,6 +572,126 @@ std::expected<void, DeviceError> Device::setKnobLedBrightness(int percent)
         return std::unexpected(DeviceError::NotConnected);
 
     return _transport.sendFeatureReport(framed);
+}
+
+std::expected<void, DeviceError> Device::setButtonColour(Button button, std::uint8_t red,
+                                                         std::uint8_t green, std::uint8_t blue)
+{
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    auto const record =
+        protocol::buttonColourRecord(protocol::selectorFor(button), red, green, blue, true);
+    auto const framed =
+        protocol::frameFeatureReport(protocol::setPropertyAt(protocol::ButtonColourAddress, record));
+
+    std::lock_guard<std::mutex> const lock { _writeMutex };
+
+    // Checked inside the lock, for the reason setKnobLedBrightness gives.
+    if (!_transport.isOpen())
+        return std::unexpected(DeviceError::NotConnected);
+
+    return _transport.sendFeatureReport(framed);
+}
+
+void Device::setEffectState(EffectState const& state)
+{
+    _effectState = state;
+}
+
+EffectState Device::effectState() const
+{
+    EffectState state;
+    state.enabled = _effectState.enabled;
+
+    // Only what somebody chose. Reporting every parameter would report the
+    // defaults the cache starts from, and those defaults are captured vendor
+    // payloads: stored and handed back on the next connect they put the whole
+    // microphone chain back on the deck.
+    for (auto const& info: protocol::Parameters)
+        if (_parameterChosen[indexOf(info.id)])
+            state.parameters[indexOf(info.id)] = parameter(info.id);
+
+    return state;
+}
+
+std::expected<void, DeviceError> Device::setEffectEnabled(protocol::FramedCommand command,
+                                                          bool enabled)
+{
+    // The position rather than the iterator, and never named as one. A
+    // std::array iterator is a raw pointer in libstdc++ and a class type in
+    // MSVC's library, so a variable holding it is either `auto const*` -- which
+    // MSVC cannot deduce -- or `auto`, which clang-tidy's readability-qualified-
+    // auto rejects on libstdc++. An index is neither, and it is what the line
+    // below wanted anyway. Past the end means the command is not one of these.
+    auto const index = static_cast<std::size_t>(std::distance(
+        protocol::EffectEnables.begin(), std::ranges::find(protocol::EffectEnables, command)));
+
+    if (index >= protocol::EffectEnables.size())
+        return std::unexpected(DeviceError::WriteFailed);
+
+    std::array<std::uint8_t, 1> const value { static_cast<std::uint8_t>(enabled ? 0x01 : 0x00) };
+    auto const sent = sendFramed(command, value);
+    if (sent)
+        _effectState.enabled[index] = enabled;
+
+    return sent;
+}
+
+void Device::applyEffectState()
+{
+    // Parameters first, enables last, and the order is load-bearing. A parameter
+    // write sends its whole framed body, and the delay effect's body carries the
+    // byte that says which effect is running -- so writing a parameter after an
+    // enable can switch back on what the enable just switched off. The enables
+    // have the final word this way round.
+    for (auto const& info: protocol::Parameters)
+    {
+        auto const wanted = _effectState.parameters[indexOf(info.id)];
+        if (!wanted)
+            continue;
+
+        if (auto const sent = setParameter(info.id, *wanted); !sent)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not restore {}: {}",
+                  info.name,
+                  describe(sent.error()));
+    }
+
+    for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
+    {
+        auto const command = protocol::EffectEnables[index];
+        std::array<std::uint8_t, 1> const value {
+            static_cast<std::uint8_t>(_effectState.enabled[index] ? 0x01 : 0x00)
+        };
+
+        if (auto const sent = sendFramed(command, value); !sent)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not set {}: {}",
+                  protocol::nameIn(protocol::FramedCommandNames, std::to_underlying(command)),
+                  describe(sent.error()));
+    }
+}
+
+void Device::lightButtonsWithDefaults()
+{
+    for (auto const button: AllButtons)
+    {
+        auto const& colour = protocol::DefaultButtonColours[indexOf(button)];
+        auto const level = protocol::DefaultButtonBrightnessPercent;
+        auto const lit = setButtonColour(button,
+                                         protocol::scaledChannel(colour.red, level),
+                                         protocol::scaledChannel(colour.green, level),
+                                         protocol::scaledChannel(colour.blue, level));
+        if (!lit)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not light the {} button: {}",
+                  nameOf(button),
+                  describe(lit.error()));
+    }
 }
 
 std::expected<void, DeviceError> Device::sendScreen(std::span<std::uint8_t const> frame)

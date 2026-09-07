@@ -319,20 +319,26 @@ struct FirmwareVersion
 ///     to each primary in turn: `ff 00 00`, `00 ff 00`, `00 00 ff`.
 ///   * **byte 8 lights the button**: `0x1f` on, `0x00` off. "Off" writes black
 ///     *and* clears this, so it is not merely a colour of zero.
-///   * **bytes 6 and 7 are not understood, and are not part of the colour.** Two
-///     records with the same button and the same colour, captured minutes apart,
-///     differ in them -- so they are not a checksum of this record and not
-///     derived from its contents. They carry something outside it.
+///   * **bytes 6 and 7 are not understood, and they are not inert.** Two records
+///     with the same button and the same colour, captured minutes apart, differ
+///     in them, so they are not a checksum of this record and not derived from
+///     its contents. They are not passive either: on the hardware, the same
+///     selector carrying the same colour `00 37 ff` lights the button with `00
+///     1d` in that pair and leaves it dark with `f9 3d`, while `ff 00 00` lights
+///     under both. So the pair decides whether a given colour shows at all.
+///     `0xf9` there sits beside the `0xf8` a knob record carries in byte 6 and
+///     the `0xf8` a surround record carries in byte 4; whether those are one
+///     field is untested, and none of the three is explained.
 ///
 /// There is no brightness field. The vendor scales the colour host-side and sends
 /// the result: its slider at minimum sent `0x19` on the lit channel and at
 /// maximum `0xff`. `0x19` is 25, the same floor its panel-brightness slider uses.
 ///
-/// Which selector is which physical button is only half known: `0x3c` is the one
-/// the vendor's grid calls top-left and `0x3e` the one it calls bottom-right.
-/// `0x3d` and `0x3f` have not been assigned, and the deck's own physical order has
-/// never been verified either -- ButtonBits runs `0x08, 0x04, 0x02, 0x01`, which
-/// is reversed for no reason anybody has recorded.
+/// Which selector is which physical button is settled, by driving all four at once
+/// to four colours nobody could confuse and reading the deck: see
+/// ButtonColourSelectors. The input direction is settled too, and by this one --
+/// lighting a single button is what identifies the press that follows it. See
+/// ButtonBits.
 inline constexpr std::uint8_t ButtonColourAddress = 0xc0;
 
 /// Which selector addresses which button, indexed by Button.
@@ -400,6 +406,39 @@ inline constexpr std::uint8_t ButtonDark = 0x00;
              lit ? ButtonLit : ButtonDark,
              0x80 };
 }
+
+/// One light's colour, at full brightness. Buttons and knob rings alike.
+struct LightColour
+{
+    std::uint8_t red {};
+    std::uint8_t green {};
+    std::uint8_t blue {};
+};
+
+/// How brightly the function buttons come up when nothing has chosen otherwise.
+///
+/// Picked at the deck rather than derived: every channel at full is glaring on a
+/// desk, and the hardware's floor of MinLightChannel is hard to see in a lit
+/// room. One number, so there is one thing to change.
+inline constexpr int DefaultButtonBrightnessPercent = 75;
+
+/// What the four buttons are lit with when nothing has chosen otherwise, indexed
+/// by Button and stated at full brightness -- scaledChannel applies the level.
+///
+/// One warm family rather than four unrelated hues, so the row reads as part of
+/// the same instrument. They are spread as far apart within it as warm colours
+/// allow, because they have to be told apart at a glance and a narrower spread
+/// was tried on the hardware first: an amber and a gold two steps apart were one
+/// light to the eye.
+inline constexpr std::array<LightColour, ButtonCount> DefaultButtonColours {
+    LightColour { .red = 0xff, .green = 0x7a, .blue = 0x00 }, // TopLeft, amber
+    LightColour { .red = 0xff, .green = 0x60, .blue = 0x50 }, // TopRight, coral
+    LightColour { .red = 0xff, .green = 0xe0, .blue = 0x1a }, // BottomLeft, gold
+    LightColour { .red = 0xc0, .green = 0x18, .blue = 0x20 }, // BottomRight, deep red
+};
+// Indexed by Button and tied to ButtonCount, so a button without a colour will
+// not compile. Which colour suits which button is a matter of taste and nothing
+// can check it; that all four differ is checked in the tests.
 
 /// The knob rings take one colour for all six, at the button address.
 ///
@@ -1352,6 +1391,38 @@ inline constexpr auto PropertyNames = std::to_array<WireName<Property>>({
 // A duplicated row would shadow the later one and never be noticed, because the
 // lookup stops at the first match and both would name something plausible.
 
+
+/// How often the deck's panel may be redrawn, in frames per second.
+///
+/// Capped rather than merely defaulted. Every frame is an 800x480 image encoded
+/// to JPEG on the host and pushed over USB in chunks, so a number typed by
+/// somebody who does not know that costs a core and a share of the bus for no
+/// visible gain -- the panel cannot show more than the ceiling here. The floor is
+/// where the interface stops being usable rather than where it stops being cheap.
+///
+/// Configuration passes through clampPanelFps, so no stored value can exceed it.
+inline constexpr int MinPanelFps = 1;
+inline constexpr int MaxPanelFps = 60;
+inline constexpr int DefaultPanelFps = 30;
+
+/// @param fps A frame rate somebody asked for.
+/// @return That rate, brought inside what this driver will send.
+[[nodiscard]] constexpr int clampPanelFps(int fps) noexcept
+{
+    return std::clamp(fps, MinPanelFps, MaxPanelFps);
+}
+
+/// Every framed command that switches an effect on or off.
+///
+/// A table rather than five calls at the one call site, so switching the chain
+/// off is a loop and a newly identified enable is one row. The noise gate is
+/// absent because no enable has been found for it -- its parameter blocks are all
+/// that has ever been captured.
+inline constexpr std::array<FramedCommand, 5> EffectEnables {
+    FramedCommand::DelayEffectEnable, FramedCommand::CompressorEnable,
+    FramedCommand::EqualiserEnableA,  FramedCommand::EqualiserEnableB,
+    FramedCommand::EqualiserEnableC,
+};
 
 /// Names for the framed commands that have one.
 inline constexpr auto FramedCommandNames = std::to_array<WireName<FramedCommand>>({

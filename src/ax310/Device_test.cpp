@@ -10,6 +10,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -120,7 +121,8 @@ TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
     // it goes one read per register the sequence is about to overwrite; this fake
     // answers none of them, so nothing is written back.
     CHECK(harness.transport.sentCount(FakeHidTransport::Channel::FeatureReport)
-          == protocol::PreservedAddresses.size() + commands::InitPayloads.size());
+          == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
+                 + protocol::EffectEnables.size() + ButtonCount);
     CHECK(harness.transport.featureReadCount() == protocol::PreservedAddresses.size());
     CHECK(harness.clock.totalSlept() == 10ms * commands::InitPayloads.size());
 }
@@ -169,7 +171,8 @@ TEST_CASE("connect sends the init payloads framed with a report-id byte", "[devi
 
     // The snapshot reads go out first, so the init payloads start after them.
     auto const first = protocol::PreservedAddresses.size();
-    REQUIRE(harness.transport.sent().size() == first + commands::InitPayloads.size());
+    REQUIRE(harness.transport.sent().size()
+            == first + commands::InitPayloads.size() + protocol::EffectEnables.size() + ButtonCount);
     for (std::size_t index = 0; index < commands::InitPayloads.size(); ++index)
     {
         INFO("init payload " << index);
@@ -1032,7 +1035,9 @@ TEST_CASE("connect puts back the settings the handshake overwrites", "[device][c
 
     // One read, then the sequence, then one write back per register.
     auto const preserved = protocol::PreservedAddresses.size();
-    REQUIRE(harness.transport.sent().size() == preserved + commands::InitPayloads.size() + preserved);
+    REQUIRE(harness.transport.sent().size()
+            == preserved + commands::InitPayloads.size() + preserved + protocol::EffectEnables.size()
+                   + ButtonCount);
 
     for (std::size_t index = 0; index < preserved; ++index)
     {
@@ -1050,6 +1055,213 @@ TEST_CASE("connect puts back the settings the handshake overwrites", "[device][c
     }
 }
 
+TEST_CASE("connect puts the effects chain into the state it was given", "[device][connect][effects]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // The handshake carries no microphone chain, so the deck keeps
+    // whatever the last program to touch it left behind. This is what makes the
+    // starting state a decision: the interface remembers it and hands it back.
+    EffectState wanted;
+    wanted.enabled.front() = true;
+    harness.device.setEffectState(wanted);
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The enables go out after the handshake and the restored registers, and
+    // before the button colours, which are the last thing a connect sends.
+    auto const& sent = harness.transport.sent();
+    auto const first = sent.size() - ButtonCount - protocol::EffectEnables.size();
+
+    for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
+    {
+        INFO("effect enable " << index);
+        auto const& bytes = sent[first + index].bytes;
+
+        // A framed command: fe 00 <length> <command> <value> <checksum>, after
+        // the report-id byte the backend prepends.
+        CHECK(bytes[1] == protocol::FramedCommandMarker);
+        CHECK(bytes[4] == std::to_underlying(protocol::EffectEnables[index]));
+        CHECK(bytes[5] == (wanted.enabled[index] ? 0x01 : 0x00));
+    }
+}
+
+TEST_CASE("the shutdown sequence is paced the way the handshake is", "[device][connect]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    REQUIRE(harness.device.connect().has_value());
+
+    auto const beforeShutdown = harness.clock.totalSlept();
+    harness.device.disconnect();
+
+    // Sent back to back, not all of these take. The sequence darkens the four
+    // buttons with four records to the same address one after another, and a deck
+    // shut down without a gap keeps one of them lit -- a different one on
+    // different runs. The handshake carries the same gap for the same reason.
+    CHECK(harness.clock.totalSlept() - beforeShutdown == 10ms * commands::ShutdownPayloads.size());
+}
+
+TEST_CASE("a connect nobody configured writes no effect parameters at all",
+          "[device][connect][effects]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The defect this guards is not a wrong value, it is any value. A parameter
+    // write sends its whole framed body, and the bodies this driver edits from
+    // are protocol::FramedDefaults -- the captured vendor payloads for reverb and
+    // the compressor. So a single parameter written on a connect nobody
+    // configured puts that effect's entire configuration back on the deck, which
+    // is the microphone chain the handshake had removed arriving by another door.
+    for (auto const& sent: harness.transport.sent())
+    {
+        if (sent.bytes[1] != protocol::FramedCommandMarker)
+            continue;
+
+        INFO("framed command 0x" << std::hex << int { sent.bytes[4] });
+        CHECK(sent.bytes[4] != std::to_underlying(protocol::FramedCommand::DelayEffectParameters));
+        CHECK(sent.bytes[4] != std::to_underlying(protocol::FramedCommand::CompressorParameters));
+    }
+}
+
+TEST_CASE("a chosen parameter is written before the enables, not after",
+          "[device][connect][effects]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    EffectState wanted;
+    wanted.parameters[protocol::indexOf(protocol::Parameter::ReverbDecay)] = 90;
+    harness.device.setEffectState(wanted);
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The order carries the meaning. A parameter write sends its whole body, and
+    // the delay effect's body carries the byte naming which effect runs -- so a
+    // parameter written after an enable can switch back on what the enable just
+    // switched off. Enables last means the enable is what the deck is left with.
+    std::optional<std::size_t> lastParameter;
+    std::optional<std::size_t> firstEnable;
+    auto const& sent = harness.transport.sent();
+
+    for (std::size_t index = 0; index < sent.size(); ++index)
+    {
+        if (sent[index].bytes[1] != protocol::FramedCommandMarker)
+            continue;
+
+        auto const command = sent[index].bytes[4];
+        if (command == std::to_underlying(protocol::FramedCommand::DelayEffectParameters))
+            lastParameter = index;
+        else if (command == std::to_underlying(protocol::FramedCommand::DelayEffectEnable)
+                 && !firstEnable)
+            firstEnable = index;
+    }
+
+    REQUIRE(lastParameter.has_value());
+    REQUIRE(firstEnable.has_value());
+    CHECK(*lastParameter < *firstEnable);
+}
+
+TEST_CASE("a deck nobody has configured reports nothing worth storing",
+          "[device][connect][effects]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    REQUIRE(harness.device.connect().has_value());
+
+    // What is reported here is what gets written to the settings file and handed
+    // back on the next connect, so a parameter reported without anybody having
+    // chosen it is how a stored file grows an effect configuration of its own.
+    auto const state = harness.device.effectState();
+    CHECK(std::ranges::none_of(state.parameters,
+                               [](auto const& chosen) { return chosen.has_value(); }));
+
+    // And one somebody did choose is reported, or nothing could ever be kept.
+    REQUIRE(harness.device.setParameter(protocol::Parameter::ReverbDecay, 90).has_value());
+    CHECK(harness.device.effectState().parameters[protocol::indexOf(
+              protocol::Parameter::ReverbDecay)]
+          == 90);
+}
+
+TEST_CASE("an effects chain nobody configured is switched off", "[device][connect][effects]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    REQUIRE(harness.device.connect().has_value());
+
+    auto const& sent = harness.transport.sent();
+    auto const first = sent.size() - ButtonCount - protocol::EffectEnables.size();
+
+    for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
+    {
+        INFO("effect enable " << index);
+        CHECK(sent[first + index].bytes[5] == 0x00);
+    }
+}
+
+TEST_CASE("connect lights every button, each in a colour of its own", "[device][connect][light]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The four colour records are the last thing a connect sends, after the
+    // handshake and after the registers it overwrote are put back.
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() > ButtonCount);
+    auto const first = sent.size() - ButtonCount;
+
+    std::vector<std::array<std::uint8_t, 3>> colours;
+    for (auto const button: AllButtons)
+    {
+        INFO("the " << nameOf(button) << " button");
+        auto const& bytes = sent[first + indexOf(button)].bytes;
+        REQUIRE(bytes.size() == protocol::FeatureReportSize);
+
+        CHECK(bytes[1] == static_cast<std::uint8_t>(protocol::CommandKind::Set));
+        CHECK(bytes[2] == protocol::PropertyGroup);
+        CHECK(bytes[3] == protocol::ButtonColourAddress);
+        CHECK(bytes[4] == 10);
+
+        // The record: 00 <selector> 01 <r> <g> <b> ?? ?? <lit> 80, from byte 5.
+        CHECK(bytes[5] == protocol::ButtonBank);
+        CHECK(bytes[6] == protocol::selectorFor(button));
+        CHECK(bytes[13] == protocol::ButtonLit);
+
+        // The colour is the default one with the default brightness already in
+        // it, because the deck has no brightness field to carry it separately.
+        auto const& wanted = protocol::DefaultButtonColours[indexOf(button)];
+        auto const level = protocol::DefaultButtonBrightnessPercent;
+        CHECK(bytes[8] == protocol::scaledChannel(wanted.red, level));
+        CHECK(bytes[9] == protocol::scaledChannel(wanted.green, level));
+        CHECK(bytes[10] == protocol::scaledChannel(wanted.blue, level));
+
+        colours.push_back({ bytes[8], bytes[9], bytes[10] });
+    }
+
+    // Four buttons a person can tell apart is the point of the scheme, so no two
+    // may go out the same. Checked on what was sent rather than on the table, so
+    // brightness scaling collapsing two colours into one would be caught too.
+    std::ranges::sort(colours);
+    CHECK(std::ranges::adjacent_find(colours) == colours.end());
+}
+
+TEST_CASE("a button is refused when the deck is not connected", "[device][light]")
+{
+    Harness harness;
+
+    auto const lit = harness.device.setButtonColour(Button::TopLeft, 0xff, 0x00, 0x00);
+    REQUIRE_FALSE(lit.has_value());
+    CHECK(lit.error() == DeviceError::NotConnected);
+    CHECK(harness.transport.sent().empty());
+}
+
 TEST_CASE("a register that answers nothing is not written back", "[device][connect][preserve]")
 {
     Harness harness;
@@ -1061,7 +1273,8 @@ TEST_CASE("a register that answers nothing is not written back", "[device][conne
     REQUIRE(harness.device.connect().has_value());
 
     CHECK(harness.transport.sent().size()
-          == protocol::PreservedAddresses.size() + commands::InitPayloads.size());
+          == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
+                 + protocol::EffectEnables.size() + ButtonCount);
 }
 
 TEST_CASE("a reply for the wrong address is refused", "[device][preserve]")
