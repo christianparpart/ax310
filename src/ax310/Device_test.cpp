@@ -92,6 +92,11 @@ struct Harness
 /// What choosing a mix takes, pinned by its own case further down.
 constexpr std::size_t MixSwitchWrites = 5;
 
+/// The gaps inside a mix switch: one ahead of the ring-colour record and one
+/// behind it, so the deck is not asked to take a record between two crowding
+/// writes.
+constexpr std::size_t MixSwitchGaps = 2;
+
 /// What adopting the deck's own state costs a connect, in reports sent.
 ///
 /// One read for the mix it came up monitoring, the writes that choosing a mix
@@ -163,10 +168,12 @@ TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
     CHECK(harness.transport.featureReadCount()
           == protocol::PreservedAddresses.size() + 1 + (MixCount * KnobCount));
 
-    // One gap per handshake payload, and one more per button record: the deck
-    // applies only some of a run of records sent back to back, so the four
-    // colours are spaced the same way the handshake is.
-    CHECK(harness.clock.totalSlept() == 10ms * (commands::InitPayloads.size() + ButtonCount));
+    // One gap per handshake payload, one more per button record, and the two a
+    // mix switch takes around its ring-colour record: the deck applies only some
+    // of a run of records sent back to back, so every one of them is spaced the
+    // way the handshake is.
+    CHECK(harness.clock.totalSlept()
+          == 10ms * (commands::InitPayloads.size() + ButtonCount + MixSwitchGaps));
 }
 
 TEST_CASE("connect goes straight to the deck's own device", "[device][connect]")
@@ -844,6 +851,31 @@ TEST_CASE("a report whose checksum does not match is dropped", "[device][decode]
     REQUIRE(result.has_value());
     CHECK(harness.listener.empty());
     CHECK(harness.logger.contains(LogLevel::Warning, "checksum"));
+}
+
+TEST_CASE("a connect publishes a meter reading of its own", "[device][decode]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.audioMeter(indexOf(KnobId::Mic), 0x7fff).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.listener.count<AudioMetersChanged>() == 1);
+
+    // The same six percentages a second time are not forwarded, which is the
+    // point of the cache. But it has to be re-armed by a connect: without that a
+    // session inherits the reading before it, and a deck sitting at a steady
+    // value -- a microphone against a maxed preamp, say -- never produces the
+    // event that would correct the interface.
+    harness.device.disconnect();
+    harness.listener.clear();
+    harness.connectInControlMode();
+
+    harness.transport.queueRead(ReportBuilder {}.audioMeter(indexOf(KnobId::Mic), 0x7fff).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    REQUIRE(harness.listener.count<AudioMetersChanged>() == 1);
+    CHECK(harness.listener.nth<AudioMetersChanged>().levels[indexOf(KnobId::Mic)] == 100);
 }
 
 TEST_CASE("the audio meters are decoded and reported", "[device][decode]")
@@ -1651,6 +1683,31 @@ TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]
 
     CHECK(sent[4].bytes[3] == 0x1d);
     CHECK(sent[4].bytes[5] == 0x00);
+}
+
+TEST_CASE("the ring colour record is spaced from what surrounds it", "[device][mix]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
+
+    // The deck applies only some of a run of records, and this one has a property
+    // write ahead of it and the fence close behind. Sent crowded it was dropped
+    // often enough that a cold deck came up wearing the handshake's creator blue
+    // under an orange panel.
+    auto const& sent = harness.transport.sent();
+    auto const record = std::ranges::find_if(sent, [](FakeHidTransport::Sent const& one) {
+        return one.bytes.size() > 5 && one.bytes[3] == protocol::ButtonColourAddress
+               && one.bytes[5] == protocol::KnobBank;
+    });
+
+    REQUIRE(record != sent.end());
+    REQUIRE(record != sent.begin());
+    REQUIRE(std::next(record) != sent.end());
+
+    CHECK(record->at > std::prev(record)->at);
+    CHECK(std::next(record)->at > record->at);
 }
 
 TEST_CASE("the ring colour is written after the mix it belongs to", "[device][mix]")

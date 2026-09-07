@@ -61,7 +61,13 @@ namespace
     constexpr std::chrono::milliseconds CommandGap { 10 };
 
     /// Leading bytes of a report to log.
-    constexpr std::size_t LoggedPrefixBytes = 16;
+    ///
+    /// Far enough to carry the audio meters, which run from byte 0x12 to 0x29 --
+    /// sixteen stopped two bytes short of them, so a hex dump of a report could
+    /// never answer a question about a meter and a hardware probe was needed to
+    /// see what the deck was actually sending.
+    constexpr std::size_t LoggedPrefixBytes = protocol::AudioMetersOffset
+                                              + (protocol::AudioMeterCount * protocol::AudioMeterStride);
 
     /// Strips the report-id byte some backends prepend and rejects sizes we
     /// cannot interpret, rather than decoding whatever arrived.
@@ -231,6 +237,14 @@ std::expected<ConnectionState, DeviceError> Device::connect()
     lightButtonsWithDefaults();
 
     _isSeeded = false;
+
+    // Re-armed, so this session publishes a meter reading of its own. The
+    // comparison below only forwards a set that differs from the last one, and
+    // nothing else resets it -- so a driver that had already seen these six
+    // percentages, in this process or before a replug, would show the reading it
+    // inherited and never correct it.
+    _audioMeters.fill(NoAudioMeterYet);
+
     publishState(ConnectionState::Connected);
     return ConnectionState::Connected;
 }
@@ -550,13 +564,28 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
     //
     // The vendor's order was replayed on the assumption that the fence made the
     // difference. It does not.
+    //
+    // The record is spaced from what surrounds it. The deck applies only some of a
+    // run of records, and crowding is what decides it -- this one has a property
+    // write immediately ahead of it and the fence close immediately behind, and it
+    // was dropped often enough that a cold deck came up on the audience mix still
+    // wearing the handshake's creator blue. Every other run of writes this driver
+    // sends is paced; this was the one that was not.
     auto const& colour = protocol::MixRingColours[indexOf(mix)];
     auto const record = protocol::knobColourRecord(colour.red, colour.green, colour.blue);
+
+    // A gap is a step of the sequence like the writes are, so it reads as one.
+    auto const pace = [this]() -> std::expected<void, DeviceError> {
+        _clock.sleepFor(CommandGap);
+        return {};
+    };
 
     return writeProperty(fence, open)
         .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
+        .and_then(pace)
         .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
+        .and_then(pace)
         .and_then([&] { return writeProperty(fence, close); })
         .transform([&] {
             std::lock_guard<std::mutex> const lock { _stateMutex };
