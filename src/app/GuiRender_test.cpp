@@ -10,11 +10,9 @@
 /// deck demands, it is not blank, its background is the colour it should be, and
 /// it changes when the device state changes.
 
-#include <app/DeviceBridge.hpp>
-#include <ax310/FakeHidTransport.hpp>
-#include <ax310/IClock.hpp>
-#include <ax310/ILogger.hpp>
 #include <ax310/Protocol.hpp>
+
+#include <BridgeHarness.hpp>
 
 #include <QColor>
 #include <QEventLoop>
@@ -47,54 +45,11 @@ constexpr int PanelWidth = 800;
 constexpr int PanelHeight = 480;
 
 /// Everything a rendered screen needs, with no hardware behind it.
-struct RenderHarness
+///
+/// The connected fake and the settling come from the shared harness; what is
+/// added here is the rendering, which only these cases want.
+struct RenderHarness: tests::BridgeHarness
 {
-    FakeHidTransport transport;
-    ManualClock clock;
-    NullLogger logger;
-    app::DeviceBridge bridge { transport, clock, logger };
-
-    RenderHarness()
-    {
-        transport.presentDevice(protocol::descriptorFor(DeviceMode::Control).productId,
-                                { HidInterface { .path = "/dev/control", .interfaceNumber = 0 } });
-    }
-
-    ~RenderHarness() { bridge.stop(); }
-
-    RenderHarness(RenderHarness const&) = delete;
-    RenderHarness& operator=(RenderHarness const&) = delete;
-    RenderHarness(RenderHarness&&) = delete;
-    RenderHarness& operator=(RenderHarness&&) = delete;
-
-    /// Brings the fake deck up, so writes succeed and levels read back.
-    ///
-    /// @param creatorSteps Level per track in the creator mix, 0..20.
-    /// @param audienceSteps The same for the audience mix.
-    void connectWithLevels(std::array<int, KnobCount> const& creatorSteps,
-                           std::array<int, KnobCount> const& audienceSteps)
-    {
-        for (auto const knob: AllKnobs)
-        {
-            transport.setRegister(protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
-                                  { static_cast<std::uint8_t>(creatorSteps[indexOf(knob)]) });
-            transport.setRegister(protocol::levelAddressOf(protocol::Property::AudienceMixLevels, knob),
-                                  { static_cast<std::uint8_t>(audienceSteps[indexOf(knob)]) });
-        }
-
-        bridge.start();
-        settle();
-    }
-
-    /// Lets the event loop run, which the meter ballistics and the worker thread
-    /// both need before anything is worth looking at.
-    static void settle(int milliseconds = 350)
-    {
-        QEventLoop loop;
-        QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
-        loop.exec();
-    }
-
     /// Renders one QML file at the given size and returns the pixels.
     ///
     /// @param source The QML to load.
