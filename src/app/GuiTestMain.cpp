@@ -13,6 +13,8 @@
 
 #include <ax310/IConsole.hpp>
 
+#include <BundledFonts.hpp>
+
 #include <QGuiApplication>
 #include <QQuickWindow>
 
@@ -65,7 +67,7 @@ int main(int argc, char* argv[])
         // fonts, and changing which ones it picks would move every pixel
         // threshold in this suite for no reason.
         if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR"))
-            qputenv("QT_QPA_FONTDIR", AX310_BUNDLED_FONT_DIR);
+            qputenv("QT_QPA_FONTDIR", ax310::testing::BundledFontDir);
 #endif
     }
 

@@ -109,6 +109,19 @@ if(AX310_BUILD_TESTS)
 
     target_link_libraries(ax310_gui_test PRIVATE ax310_gui Catch2::Catch2)
     target_include_directories(ax310_gui_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+    # Through a generated header rather than a compile definition: a path quoted
+    # on a command line has to survive whatever the toolchain does with quoting,
+    # and the native and cross MSVC drivers disagreed about it.
+    #
+    # Beside the target rather than inside a preset's branch. The test main
+    # includes it unconditionally, so a configuration that builds that file has
+    # to have it -- and TSan, which registers no CTest entries and so skips the
+    # block below, builds it too.
+    set(AX310_BUNDLED_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gui/fonts")
+    configure_file(app/BundledFonts.hpp.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/generated/BundledFonts.hpp" @ONLY)
+    target_include_directories(ax310_gui_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     set_target_properties(ax310_gui_test PROPERTIES AUTOMOC ON)
 
     # Built under every preset, but registered with CTest under all but TSan.
@@ -134,8 +147,6 @@ if(AX310_BUILD_TESTS)
         # no output and nothing naming Qt. It is ignored where it is not needed.
         # The fonts this project bundles, as a path the test binary can hand to
         # Qt on a platform whose font database is otherwise empty.
-        target_compile_definitions(ax310_gui_test PRIVATE
-            AX310_BUNDLED_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/gui/fonts")
 
         ax310_place_runtime_dlls(ax310_gui_test)
         catch_discover_tests(ax310_gui_test
