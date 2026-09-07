@@ -76,6 +76,16 @@ DeviceBridge::~DeviceBridge()
     stop();
 }
 
+void DeviceBridge::setEffectState(EffectState const& state)
+{
+    _device.setEffectState(state);
+}
+
+EffectState DeviceBridge::effectState() const
+{
+    return _device.effectState();
+}
+
 void DeviceBridge::start()
 {
     if (_isRunning.exchange(true))

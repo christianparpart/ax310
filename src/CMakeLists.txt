@@ -12,6 +12,8 @@ add_subdirectory(checks)
 add_library(ax310_gui STATIC
     app/DeviceBridge.cpp
     app/DeviceBridge.hpp
+    app/Settings.cpp
+    app/Settings.hpp
 )
 
 target_link_libraries(ax310_gui PUBLIC
@@ -101,6 +103,7 @@ if(AX310_BUILD_TESTS)
     add_executable(ax310_gui_test
         app/GuiRender_test.cpp
         app/GuiTestMain.cpp
+        app/Settings_test.cpp
     )
 
     target_link_libraries(ax310_gui_test PRIVATE ax310_gui Catch2::Catch2)

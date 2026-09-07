@@ -70,6 +70,18 @@ class DeviceBridge final: public QObject, public IDeviceListener
     DeviceBridge(DeviceBridge&&) = delete;
     DeviceBridge& operator=(DeviceBridge&&) = delete;
 
+    /// What the effects chain should be put into after each connect.
+    ///
+    /// Set before start(), from whatever the interface remembered. The driver
+    /// applies it as part of connecting, which is the moment the state would
+    /// otherwise be inherited from whichever program touched the deck last.
+    ///
+    /// @param state The chain to restore.
+    void setEffectState(EffectState const& state);
+
+    /// @return The effects chain as it now stands, for storing.
+    [[nodiscard]] EffectState effectState() const;
+
     /// Starts the worker thread, which connects and then polls until stopped.
     /// Reconnection is part of that loop, so a deck plugged in later is picked
     /// up without anything else happening.
