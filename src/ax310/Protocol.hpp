@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "Enumerators.hpp"
 #include "Types.hpp"
 
 #include <algorithm>
@@ -1358,13 +1359,7 @@ inline constexpr auto PropertyNames = std::to_array<WireName<Property>>({
 
 // A duplicated row would shadow the later one and never be noticed, because the
 // lookup stops at the first match and both would name something plausible.
-static_assert([] {
-    for (std::size_t i = 0; i < PropertyNames.size(); ++i)
-        for (std::size_t j = i + 1; j < PropertyNames.size(); ++j)
-            if (PropertyNames[i].value == PropertyNames[j].value)
-                return false;
-    return true;
-}(), "two rows of PropertyNames name the same address");
+
 
 /// Names for the framed commands that have one.
 inline constexpr auto FramedCommandNames = std::to_array<WireName<FramedCommand>>({
@@ -1380,13 +1375,7 @@ inline constexpr auto FramedCommandNames = std::to_array<WireName<FramedCommand>
     { .value = FramedCommand::Commit, .name = "Commit" },
 });
 
-static_assert([] {
-    for (std::size_t i = 0; i < FramedCommandNames.size(); ++i)
-        for (std::size_t j = i + 1; j < FramedCommandNames.size(); ++j)
-            if (FramedCommandNames[i].value == FramedCommandNames[j].value)
-                return false;
-    return true;
-}(), "two rows of FramedCommandNames name the same command");
+
 
 /// @param table One of the name tables above.
 /// @param value The byte to look up.
@@ -1401,6 +1390,47 @@ template <typename Enum, std::size_t N>
 
     return {};
 }
+
+/// @param table A name table.
+/// @return Whether every enumerator of its enumeration has a row.
+///
+/// The direction the typed rows cannot cover on their own. A row can only name
+/// something the enumeration defines, but nothing stops an enumerator being added
+/// with no row, and it would then decode as a bare number for ever.
+template <typename Enum, std::size_t N>
+[[nodiscard]] consteval bool everyEnumeratorIsNamed(std::array<WireName<Enum>, N> const& table)
+{
+    return std::ranges::all_of(enumerators::enumeratorsOf<Enum>(), [&table](Enum value) {
+        return !nameIn(table, std::to_underlying(value)).empty();
+    });
+}
+
+/// @param table A name table.
+/// @return Whether no two rows name the same wire value.
+///
+/// A duplicate shadows the later row, and since the lookup stops at the first
+/// match both would name something plausible.
+template <typename Enum, std::size_t N>
+[[nodiscard]] consteval bool everyRowIsDistinct(std::array<WireName<Enum>, N> const& table)
+{
+    for (std::size_t i = 0; i < N; ++i)
+        for (std::size_t j = i + 1; j < N; ++j)
+            if (table[i].value == table[j].value)
+                return false;
+
+    return true;
+}
+
+// The names stay hand-written, because they say more than an identifier would --
+// "MicConfiguration (bit 0 phantom, bit 3 effects bypass)" is the whole point of
+// the table. These make sure every enumerator has one.
+static_assert(everyRowIsDistinct(PropertyNames), "two rows of PropertyNames name the same address");
+static_assert(everyEnumeratorIsNamed(PropertyNames),
+              "a Property enumerator has no row in PropertyNames");
+static_assert(everyRowIsDistinct(FramedCommandNames),
+              "two rows of FramedCommandNames name the same command");
+static_assert(everyEnumeratorIsNamed(FramedCommandNames),
+              "a FramedCommand enumerator has no row in FramedCommandNames");
 
 /// @param payload A 0xfe-family command.
 /// @return The checksum its last byte should carry.

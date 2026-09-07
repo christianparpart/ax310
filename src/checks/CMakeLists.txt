@@ -32,4 +32,4 @@ set_target_properties(ax310_name_coverage PROPERTIES CXX_STANDARD 26)
 
 # The assertions are static, so building the target *is* the check. Running it
 # only proves the build happened, which is what makes it a useful CTest entry.
-add_test(NAME "every enumerator has a name" COMMAND ax310_name_coverage)
+add_test(NAME "the enumerator trick agrees with P2996" COMMAND ax310_name_coverage)

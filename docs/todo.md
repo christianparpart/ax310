@@ -197,11 +197,14 @@ captures name them.
   and sent immediately before `CompressorEnable`. It is not in `InitPayloads`,
   which came from an older capture, and no effect capture triggers it. The
   position suggests a paired enable; nothing else does.
-- **The name-table coverage check runs on one compiler.** It needs P2996
-  reflection, which is C++26; GCC 16 implements it behind `-freflection` and
-  Clang 22 and MSVC do not. `src/checks/` probes for it and contributes nothing
-  where it is missing, so the gcc-release preset carries the check and the others
-  are unaffected. Drop the probe once two more toolchains catch up.
+- **`Enumerators.hpp` depends on compiler diagnostic strings.** It lists an
+  enumeration's enumerators by reading `__PRETTY_FUNCTION__` / `__FUNCSIG__`,
+  because C++23 has no way to ask. A self-test asserts the trick still works, and
+  `src/checks/` cross-checks it against P2996 on the one compiler that has
+  reflection. Delete both once P2996 is available everywhere — the standard
+  version then becomes the implementation rather than the second opinion. The
+  MSVC branch of the marker is written from documentation and has only ever been
+  exercised by CI.
 - **`PreservedAddresses` reads `0x11` with length 3; the vendor reads it with 1.**
   The vendor *writes* three bytes there, so three is a legal write length, but no
   capture shows a three-byte read. Since the deck does not clear its reply buffer,
