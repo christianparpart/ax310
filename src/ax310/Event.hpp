@@ -35,6 +35,7 @@ struct KnobTouched
 /// A knob's tracked volume changed.
 struct KnobVolumeChanged
 {
+    MixId mix;  ///< Which mix the new level belongs to.
     KnobId knob;
     int volume; ///< Percent.
 };

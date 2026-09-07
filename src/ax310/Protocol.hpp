@@ -866,6 +866,17 @@ enum class Property : std::uint8_t
     /// deck with its own compressor, and an ear cannot tell the two apart.
     MicGain = 0x1f,
 
+    /// The microphone's level, written alongside CreatorMixLevels.
+    ///
+    /// The Mic is the one track that takes two writes. Dragging the vendor's Mic
+    /// slider produces this and `0x27` in pairs carrying the same value, every
+    /// time, and no other track does anything of the kind -- which is why
+    /// Device::setLevel writes it for KnobId::Mic in the creator mix and for
+    /// nothing else. What the second register is *for* is not established; that
+    /// the vendor writes it is.
+    ///
+    /// It is a single register, and the pairing has only ever been captured
+    /// against the creator block, so the audience mix's Mic does not get it.
     KnobPropertyAt35 = 0x35,
 };
 

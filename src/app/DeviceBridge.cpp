@@ -137,9 +137,10 @@ void DeviceBridge::run()
                 continue;
             }
 
-            // Read on this thread, not the GUI's: it is twelve USB round trips,
-            // and it belongs to the connect rather than to whoever asks first.
-            publishLevels();
+            // Published on this thread, not the GUI's: connect() has just spent
+            // twelve USB round trips reading these, and they belong to the
+            // connect rather than to whoever asks first.
+            publishDeviceState();
             continue;
         }
 
@@ -158,28 +159,21 @@ void DeviceBridge::setKnobLedBrightness(int percent)
         logTo(_logger, LogLevel::Warning, "setKnobLedBrightness failed: {}", describe(result.error()));
 }
 
-void DeviceBridge::publishLevels()
+void DeviceBridge::publishDeviceState()
 {
+    // Read from the driver rather than from the wire: it went to the deck for
+    // these when it connected, and asking twice would only invite the two
+    // answers to differ.
+    emit mixChanged(selectedMix());
+
     for (auto const mix: AllMixes)
     {
         for (auto const knob: AllKnobs)
         {
-            auto const level = _device.level(mix, knob);
-            if (!level)
-            {
-                logTo(_logger,
-                      LogLevel::Debug,
-                      "could not read the {} level for {}: {}",
-                      nameOf(mix),
-                      nameOf(knob),
-                      describe(level.error()));
-                continue;
-            }
-
-            _levels[indexOf(mix)][indexOf(knob)] = level->asPercent();
-            emit levelChanged(static_cast<int>(indexOf(mix)),
-                              static_cast<int>(indexOf(knob)),
-                              level->asPercent());
+            auto const percent = _device.level(mix, knob).asPercent();
+            _levels[indexOf(mix)][indexOf(knob)] = percent;
+            emit levelChanged(
+                static_cast<int>(indexOf(mix)), static_cast<int>(indexOf(knob)), percent);
         }
     }
 }
@@ -285,8 +279,13 @@ void DeviceBridge::selectMix(int mix)
         return;
     }
 
-    _mix = chosen;
-    emit mixChanged(mix);
+    // The levels are read back rather than assumed: the rings now display the
+    // other mix's row, and what that row holds is the deck's to say. Without this
+    // the interface would show the mix it just left.
+    if (auto const read = _device.readLevels(); !read)
+        logTo(_logger, LogLevel::Warning, "could not re-read the levels: {}", describe(read.error()));
+
+    publishDeviceState();
 }
 
 int DeviceBridge::levelPercent(int mix, int knob) const
@@ -300,7 +299,7 @@ int DeviceBridge::levelPercent(int mix, int knob) const
 
 int DeviceBridge::selectedMix() const noexcept
 {
-    return static_cast<int>(indexOf(_mix));
+    return static_cast<int>(indexOf(_device.selectedMix()));
 }
 
 bool DeviceBridge::micMonitor() const
@@ -453,7 +452,12 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
                              e.touch == Touch::Touched);
                    },
                    [this](KnobVolumeChanged const& e) {
-                       logTo(_logger, LogLevel::Debug, "event: knob {} volume={}", indexOf(e.knob), e.volume);
+                       logTo(_logger,
+                             LogLevel::Debug,
+                             "event: knob {} volume={} in the {} mix",
+                             indexOf(e.knob),
+                             e.volume,
+                             nameOf(e.mix));
                    },
                    [this](ScreenTouched const& e) {
                        logTo(_logger, LogLevel::Debug, "event: screen {},{}", e.x, e.y);
@@ -478,19 +482,31 @@ void DeviceBridge::onDeviceEvent(DeviceEvent const& event)
     // into DeviceEvent without being handled here.
     std::visit(Overloaded {
                    [this](ButtonPressed const& e) { emit buttonPressed(e.button); },
-                   [this](KnobPushed const& e) { emit knobPushed(e.knob); },
+                   [this](KnobPushed const& e) {
+                       // Pushing the microphone's knob toggles monitoring, which
+                       // is what the Monitor tile does -- through the same call,
+                       // so the deck and the panel cannot end up with two answers
+                       // to one question.
+                       //
+                       // Here rather than in QML because three MixerViews exist
+                       // at once -- the panel, the desktop mixer, and the
+                       // desktop's preview of the panel -- so a handler over
+                       // there would toggle monitoring three times per push.
+                       if (e.knob == KnobId::Mic)
+                           setMicMonitor(!micMonitor());
+
+                       emit knobPushed(e.knob);
+                   },
                    [this](KnobTouched const& e) { emit knobTouched(e.knob, e.touch); },
                    [this](KnobVolumeChanged const& e) {
-                       // Turning a knob has to be applied by the host: the deck
-                       // reports the turn as a relative counter and changes
-                       // nothing itself. Without this the knobs move, the numbers
-                       // move, and the audio does not.
-                       //
-                       // It belongs here rather than in QML because three
-                       // MixerViews exist at once -- the panel, the desktop
-                       // mixer, and the desktop's preview of the panel -- and
-                       // each would issue its own write.
-                       setLevel(selectedMix(), static_cast<int>(indexOf(e.knob)), e.volume);
+                       // The driver has already written this to the deck, and it
+                       // says which mix it wrote to -- so there is nothing to
+                       // decide here and nothing to guess. Mirrored into the
+                       // interface's copy and announced.
+                       auto const mix = static_cast<int>(indexOf(e.mix));
+                       auto const knob = static_cast<int>(indexOf(e.knob));
+                       _levels[indexOf(e.mix)][indexOf(e.knob)] = e.volume;
+                       emit levelChanged(mix, knob, e.volume);
                        emit knobVolumeChanged(e.knob, e.volume);
                    },
                    [this](ScreenTouched const& e) { emit screenTouched(e.x, e.y, e.phase); },

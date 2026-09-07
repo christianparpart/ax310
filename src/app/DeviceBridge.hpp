@@ -264,7 +264,12 @@ class DeviceBridge final: public QObject, public IDeviceListener
 
     /// Reads all twelve levels from the deck and announces them. Runs on the
     /// worker thread as part of a connect.
-    void publishLevels();
+    /// Mirrors the driver's own state into this object and announces it.
+    ///
+    /// The driver reads the deck on connect and on a mix change; this is what
+    /// carries the answer into the interface, so the panel shows what the deck
+    /// said rather than what QML asked for.
+    void publishDeviceState();
 
     // Held only when the production constructor made them; the injecting
     // constructor leaves all three empty and borrows instead.
@@ -288,9 +293,6 @@ class DeviceBridge final: public QObject, public IDeviceListener
     /// The levels as last written or last read from the deck, in percent.
     std::array<std::array<int, ax310::KnobCount>, ax310::MixCount> _levels {};
 
-    /// Which mix the interface is editing. Held here rather than read back
-    /// because the deck offers no way to ask.
-    ax310::MixId _mix = ax310::MixId::Creator;
 
     /// Which page the panel is on, shared by every view of it.
     bool _panelShowsEffects = false;

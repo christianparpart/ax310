@@ -41,6 +41,25 @@ struct Harness
     /// on, so a case can ask how far apart two writes actually went out.
     Harness() { transport.useClock(clock); }
 
+    /// Gives every track the same level in both mixes before a connect.
+    ///
+    /// A turn is relative, so it needs a level to be relative *to*, and that
+    /// level is the deck's. A case that skips this connects to a deck holding
+    /// nothing and every track starts silent.
+    ///
+    /// @param steps The level, in the hardware's own steps, 0..20.
+    void holdLevels(int steps)
+    {
+        for (auto const mix: AllMixes)
+        {
+            auto const block = mix == MixId::Creator ? protocol::Property::CreatorMixLevels
+                                                     : protocol::Property::AudienceMixLevels;
+            for (auto const knob: AllKnobs)
+                transport.setRegister(protocol::levelAddressOf(block, knob),
+                                      { static_cast<std::uint8_t>(steps) });
+        }
+    }
+
     /// Puts a control-mode deck on the fake bus.
     void presentControlDevice()
     {
@@ -68,6 +87,14 @@ struct Harness
         listener.clear();
     }
 };
+
+/// What adopting the deck's own state costs a connect, in reports sent.
+///
+/// One read for the mix it came up monitoring, and one per level in both mixes.
+/// The five writes a mix switch takes are not in here: a fake that does not
+/// answer the mix read leaves the driver with no mix to select, which is what
+/// the cases counting on this present.
+constexpr std::size_t StateAdoptionReads = 1 + (MixCount * KnobCount);
 
 /// @param frame The bytes to sum.
 /// @return The 16-bit unsigned sum the chunk header carries.
@@ -126,8 +153,9 @@ TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
     // answers none of them, so nothing is written back.
     CHECK(harness.transport.sentCount(FakeHidTransport::Channel::FeatureReport)
           == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
-                 + protocol::EffectEnables.size() + ButtonCount);
-    CHECK(harness.transport.featureReadCount() == protocol::PreservedAddresses.size());
+                 + protocol::EffectEnables.size() + StateAdoptionReads + ButtonCount);
+    CHECK(harness.transport.featureReadCount()
+          == protocol::PreservedAddresses.size() + StateAdoptionReads);
 
     // One gap per handshake payload, and one more per button record: the deck
     // applies only some of a run of records sent back to back, so the four
@@ -180,7 +208,8 @@ TEST_CASE("connect sends the init payloads framed with a report-id byte", "[devi
     // The snapshot reads go out first, so the init payloads start after them.
     auto const first = protocol::PreservedAddresses.size();
     REQUIRE(harness.transport.sent().size()
-            == first + commands::InitPayloads.size() + protocol::EffectEnables.size() + ButtonCount);
+            == first + commands::InitPayloads.size() + protocol::EffectEnables.size()
+                   + StateAdoptionReads + ButtonCount);
     for (std::size_t index = 0; index < commands::InitPayloads.size(); ++index)
     {
         INFO("init payload " << index);
@@ -650,6 +679,7 @@ TEST_CASE("a knob touch fires on both edges", "[device][decode]")
 TEST_CASE("a knob turn moves the volume by the number of steps turned", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
@@ -659,7 +689,7 @@ TEST_CASE("a knob turn moves the volume by the number of steps turned", "[device
     REQUIRE(harness.device.poll(100ms).has_value());
 
     // The reported byte is a counter, not a position, so two steps up is two
-    // steps from wherever the volume already was -- 50% by default.
+    // steps from wherever the deck said the volume already was -- ten steps.
     REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
     CHECK(harness.listener.nth<KnobVolumeChanged>().knob == KnobId::Mic);
     CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 60);
@@ -668,6 +698,7 @@ TEST_CASE("a knob turn moves the volume by the number of steps turned", "[device
 TEST_CASE("a knob counter that wraps past zero is one step, not a fall of 255", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 0xff).build());
@@ -683,6 +714,7 @@ TEST_CASE("a knob counter that wraps past zero is one step, not a fall of 255", 
 TEST_CASE("turning a knob down lowers the volume", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
@@ -698,6 +730,7 @@ TEST_CASE("turning a knob down lowers the volume", "[device][decode]")
 TEST_CASE("the volume stops at the ends of its range", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 0).build());
@@ -730,6 +763,7 @@ TEST_CASE("a knob that is not touched does not report a turn", "[device][decode]
 TEST_CASE("the all-zero filler report is not decoded as anything", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
@@ -750,6 +784,7 @@ TEST_CASE("the all-zero filler report is not decoded as anything", "[device][dec
 TEST_CASE("a knob counter that moves while untouched is absorbed, not reported", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 15).build());
@@ -769,6 +804,7 @@ TEST_CASE("a knob counter that moves while untouched is absorbed, not reported",
 TEST_CASE("several knobs turning at once are each reported", "[device][decode]")
 {
     Harness harness;
+    harness.holdLevels(10);
     harness.connectInControlMode();
 
     harness.transport.queueRead(
@@ -1088,7 +1124,7 @@ TEST_CASE("connect puts back the settings the handshake overwrites", "[device][c
     auto const preserved = protocol::PreservedAddresses.size();
     REQUIRE(harness.transport.sent().size()
             == preserved + commands::InitPayloads.size() + preserved + protocol::EffectEnables.size()
-                   + ButtonCount);
+                   + StateAdoptionReads + ButtonCount);
 
     for (std::size_t index = 0; index < preserved; ++index)
     {
@@ -1123,7 +1159,10 @@ TEST_CASE("connect puts the effects chain into the state it was given", "[device
     // The enables go out after the handshake and the restored registers, and
     // before the button colours, which are the last thing a connect sends.
     auto const& sent = harness.transport.sent();
-    auto const first = sent.size() - ButtonCount - protocol::EffectEnables.size();
+    // The tail of a connect, in order: the effect enables, the reads that adopt
+    // the deck's own mix and levels, then the button colours.
+    auto const first =
+        sent.size() - ButtonCount - StateAdoptionReads - protocol::EffectEnables.size();
 
     for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
     {
@@ -1246,7 +1285,10 @@ TEST_CASE("an effects chain nobody configured is switched off", "[device][connec
     REQUIRE(harness.device.connect().has_value());
 
     auto const& sent = harness.transport.sent();
-    auto const first = sent.size() - ButtonCount - protocol::EffectEnables.size();
+    // The tail of a connect, in order: the effect enables, the reads that adopt
+    // the deck's own mix and levels, then the button colours.
+    auto const first =
+        sent.size() - ButtonCount - StateAdoptionReads - protocol::EffectEnables.size();
 
     for (std::size_t index = 0; index < protocol::EffectEnables.size(); ++index)
     {
@@ -1350,7 +1392,7 @@ TEST_CASE("a register that answers nothing is not written back", "[device][conne
 
     CHECK(harness.transport.sent().size()
           == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
-                 + protocol::EffectEnables.size() + ButtonCount);
+                 + protocol::EffectEnables.size() + StateAdoptionReads + ButtonCount);
 }
 
 TEST_CASE("a reply for the wrong address is refused", "[device][preserve]")
@@ -1429,31 +1471,93 @@ TEST_CASE("every track resolves to its own register in both mixes", "[device][le
     harness.connectInControlMode();
 
     for (auto const knob: AllKnobs)
+    {
+        INFO("the " << nameOf(knob) << " track");
+        harness.transport.clearSent();
         REQUIRE(harness.device.setLevel(MixId::Creator, knob, Level::fromSteps(3)).has_value());
 
-    REQUIRE(harness.transport.sent().size() == KnobCount);
-    for (std::size_t index = 0; index < KnobCount; ++index)
-    {
-        INFO("track " << index);
-        CHECK(harness.transport.sent()[index].bytes[3] == 0x27 + index);
+        // The first write is the level; the Mic adds a second, which the case
+        // below is about.
+        REQUIRE(!harness.transport.sent().empty());
+        CHECK(harness.transport.sent()[0].bytes[3] == 0x27 + indexOf(knob));
     }
 }
 
-TEST_CASE("a level reads back from the deck", "[device][level]")
+TEST_CASE("the microphone's level goes to both registers the vendor writes", "[device][level]")
 {
     Harness harness;
     harness.connectInControlMode();
 
-    harness.transport.queueFeatureReport({ 0x00,
-                                           static_cast<std::uint8_t>(protocol::CommandKind::Get),
-                                           protocol::PropertyGroup,
-                                           0x31,
-                                           0x01,
-                                           0x0e });
+    // The Mic is the one track that takes two writes. Dragging the vendor's own
+    // Mic slider writes 0x35 carrying the same value alongside the level, every
+    // time, and no other track does anything of the kind.
+    REQUIRE(harness.device.setLevel(MixId::Creator, KnobId::Mic, Level::fromSteps(6)).has_value());
 
-    auto const level = harness.device.level(MixId::Audience, KnobId::System);
-    REQUIRE(level.has_value());
-    CHECK(level->asPercent() == 70);
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[0].bytes[3] == static_cast<std::uint8_t>(protocol::Property::CreatorMixLevels));
+    CHECK(sent[0].bytes[5] == 6);
+    CHECK(sent[1].bytes[3] == static_cast<std::uint8_t>(protocol::Property::KnobPropertyAt35));
+    CHECK(sent[1].bytes[5] == 6);
+}
+
+TEST_CASE("the audience mix's microphone takes one write", "[device][level]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // 0x35 is a single register and the pairing has only ever been captured
+    // against 0x27, so the audience block does not get it. Writing it there
+    // would be imposing a shape nothing has shown the deck to want.
+    REQUIRE(harness.device.setLevel(MixId::Audience, KnobId::Mic, Level::fromSteps(6)).has_value());
+
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].bytes[3] == static_cast<std::uint8_t>(protocol::Property::AudienceMixLevels));
+}
+
+TEST_CASE("the levels read back from the deck", "[device][level]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // Every track in both mixes, so the read covers the whole map rather than
+    // the one address a case happens to name. The staircase differs per mix, so
+    // a read that took the same block twice would be visible.
+    for (auto const knob: AllKnobs)
+    {
+        auto const step = static_cast<std::uint8_t>(indexOf(knob) + 1);
+        harness.transport.setRegister(
+            protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob), { step });
+        harness.transport.setRegister(
+            protocol::levelAddressOf(protocol::Property::AudienceMixLevels, knob),
+            { static_cast<std::uint8_t>(step + 10) });
+    }
+
+    REQUIRE(harness.device.connect().has_value());
+
+    for (auto const knob: AllKnobs)
+    {
+        INFO("the " << nameOf(knob) << " track");
+        auto const step = static_cast<int>(indexOf(knob)) + 1;
+        CHECK(harness.device.level(MixId::Creator, knob) == Level::fromSteps(step));
+        CHECK(harness.device.level(MixId::Audience, knob) == Level::fromSteps(step + 10));
+    }
+}
+
+TEST_CASE("a level written to the deck is what the driver then holds", "[device][level]")
+{
+    Harness harness;
+    harness.connectInControlMode();
+
+    // The cache is the deck's register as this driver last left it, so a write
+    // that succeeds moves it and a knob turn afterwards starts from there.
+    REQUIRE(harness.device.setLevel(MixId::Audience, KnobId::System, Level::fromPercent(70))
+                .has_value());
+    CHECK(harness.device.level(MixId::Audience, KnobId::System).asPercent() == 70);
+
+    // And the other mix is untouched, because they are separate registers.
+    CHECK(harness.device.level(MixId::Creator, KnobId::System).asPercent() != 70);
 }
 
 TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]")
@@ -1488,6 +1592,98 @@ TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]
     CHECK(sent[3].bytes[5] == 0x01);
     CHECK(sent[4].bytes[3] == 0x1d);
     CHECK(sent[4].bytes[5] == 0x00);
+}
+
+TEST_CASE("a turn after a mix switch starts from the new mix's level", "[device][mix][decode]")
+{
+    Harness harness;
+
+    // Deliberately different per mix, so a turn taken from the wrong one lands
+    // somewhere the case can name rather than somewhere plausible.
+    for (auto const knob: AllKnobs)
+    {
+        harness.transport.setRegister(
+            protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob), { 10 });
+        harness.transport.setRegister(
+            protocol::levelAddressOf(protocol::Property::AudienceMixLevels, knob), { 4 });
+    }
+    harness.connectInControlMode();
+
+    REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
+    harness.transport.clearSent();
+    harness.listener.clear();
+
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 10).build());
+    harness.transport.queueRead(ReportBuilder {}.knobTouch(0x01).knobValue(KnobId::Mic, 11).build());
+    REQUIRE(harness.device.poll(100ms).has_value());
+    REQUIRE(harness.device.poll(100ms).has_value());
+
+    // One step up from the audience mix's four, which is 25%. One step up from
+    // the creator mix's ten would be 55%, and that is what a knob turn must not
+    // produce straight after a switch to the audience mix.
+    REQUIRE(harness.listener.count<KnobVolumeChanged>() == 1);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().mix == MixId::Audience);
+    CHECK(harness.listener.nth<KnobVolumeChanged>().volume == 25);
+
+    // And the write goes to the register that mix keeps its levels in.
+    REQUIRE(!harness.transport.sent().empty());
+    CHECK(harness.transport.sent()[0].bytes[3]
+          == static_cast<std::uint8_t>(protocol::Property::AudienceMixLevels));
+    CHECK(harness.transport.sent()[0].bytes[5] == 5);
+}
+
+TEST_CASE("connect adopts the mix the deck came up monitoring", "[device][connect][mix]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // The handshake is bracketed by a snapshot and a restore, so a deck put down
+    // on the audience mix comes back up on it. What it cannot come back up with
+    // is the ring colour: that lives in a record rather than a property, and the
+    // handshake has just written creator blue over it.
+    harness.transport.setRegister(static_cast<std::uint8_t>(protocol::Property::SelectedMix), { 0x01 });
+
+    REQUIRE(harness.device.connect().has_value());
+
+    CHECK(harness.device.selectedMix() == MixId::Audience);
+
+    // The last ring record, not the first: the handshake replays one of its own
+    // in creator blue, and what matters is the colour the deck is left holding.
+    auto const& sent = harness.transport.sent();
+    auto const ring = std::ranges::find_last_if(sent, [](FakeHidTransport::Sent const& one) {
+        return one.bytes.size() > 10 && one.bytes[3] == protocol::ButtonColourAddress
+               && one.bytes[5] == protocol::KnobBank;
+    });
+
+    REQUIRE(!ring.empty());
+    CHECK(ring.front().bytes[8] == protocol::MixRingColours[indexOf(MixId::Audience)].red);
+    CHECK(ring.front().bytes[9] == protocol::MixRingColours[indexOf(MixId::Audience)].green);
+    CHECK(ring.front().bytes[10] == protocol::MixRingColours[indexOf(MixId::Audience)].blue);
+}
+
+TEST_CASE("connect keeps the creator mix when that is where the deck is", "[device][connect][mix]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    harness.transport.setRegister(static_cast<std::uint8_t>(protocol::Property::SelectedMix), { 0x00 });
+
+    REQUIRE(harness.device.connect().has_value());
+    CHECK(harness.device.selectedMix() == MixId::Creator);
+}
+
+TEST_CASE("a mix the deck cannot name is not adopted", "[device][connect][mix]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // Two values are documented and this is neither. Guessing would put the
+    // rings and the audio somewhere nobody asked for, so the driver keeps what
+    // it had and says so.
+    harness.transport.setRegister(static_cast<std::uint8_t>(protocol::Property::SelectedMix), { 0x7f });
+
+    REQUIRE(harness.device.connect().has_value());
+    CHECK(harness.device.selectedMix() == MixId::Creator);
+    CHECK(harness.logger.contains(LogLevel::Warning, "could not read the selected mix"));
 }
 
 TEST_CASE("each mix gets its own ring colour and ring selector", "[device][mix]")

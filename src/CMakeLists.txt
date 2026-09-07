@@ -101,6 +101,7 @@ endif()
 # machine with the deck on it is not available.
 if(AX310_BUILD_TESTS)
     add_executable(ax310_gui_test
+        app/DeviceBridge_test.cpp
         app/GuiRender_test.cpp
         app/GuiTestMain.cpp
         app/Settings_test.cpp

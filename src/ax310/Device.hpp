@@ -192,6 +192,14 @@ class Device
     /// not light is not a reason to refuse the deck.
     void lightButtonsWithDefaults();
 
+    /// Reads back the mix and the levels the deck came up holding, and puts the
+    /// ring colour where that mix says it should be.
+    ///
+    /// Failures are logged rather than returned, the way restoreProperties'
+    /// are: the deck is up by this point, and a driver that refused the
+    /// connection over an unread register would be worse than one that says so.
+    void adoptTheDecksOwnState();
+
     /// Pushes one JPEG frame to the device's screen, chunked as the deck wants.
     /// @param frame The encoded frame.
     /// @return Nothing, or why the transfer failed.
@@ -210,12 +218,22 @@ class Device
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> setLevel(MixId mix, KnobId knob, Level level);
 
-    /// Reads one track's level back from the deck.
-    ///
-    /// @param mix Which mix to read.
+    /// @param mix Which mix to report.
     /// @param knob Which track.
-    /// @return The level the hardware holds, or why the read failed.
-    [[nodiscard]] std::expected<Level, DeviceError> level(MixId mix, KnobId knob);
+    /// @return What the deck last said this level was, or what was last written
+    ///         to it. A cache of the deck's own register and never a value of
+    ///         this driver's own -- readLevels() is what fills it.
+    [[nodiscard]] Level level(MixId mix, KnobId knob) const noexcept;
+
+    /// Reads every track's level in both mixes back from the deck.
+    ///
+    /// Twelve round trips, so it belongs to a connect or to a mix change rather
+    /// than to whoever asks first. It is also the only thing that makes level()
+    /// worth reading: the deck holds these, this driver only remembers them.
+    ///
+    /// @return Nothing, or why the first failed read failed. The cache keeps
+    ///         whatever was read before that.
+    [[nodiscard]] std::expected<void, DeviceError> readLevels();
 
     /// Chooses which mix the deck monitors and displays on its knob rings.
     ///
@@ -225,6 +243,19 @@ class Device
     /// @param mix The mix to monitor.
     /// @return Nothing, or why the write failed.
     [[nodiscard]] std::expected<void, DeviceError> selectMix(MixId mix);
+
+    /// @return Which mix the deck was last read to be monitoring, or last told
+    ///         to monitor.
+    [[nodiscard]] MixId selectedMix() const noexcept;
+
+    /// Reads which mix the deck is monitoring.
+    ///
+    /// Worth asking rather than assuming: connect() puts back the mix the deck
+    /// was on before the handshake, which is not necessarily the one this driver
+    /// would have picked.
+    ///
+    /// @return The mix Property::SelectedMix names, or why the read failed.
+    [[nodiscard]] std::expected<MixId, DeviceError> readSelectedMix();
 
     /// Sets one DSP parameter.
     ///
@@ -357,9 +388,18 @@ class Device
     std::array<protocol::FramedDefault, protocol::FramedDefaults.size()> _framedBodies =
         protocol::FramedDefaults;
 
-    /// Volume per knob, in percent. Held here because the deck reports turns as
-    /// a relative counter, so the absolute level is ours to keep, not its.
-    std::array<int, KnobCount> _volumes { 50, 50, 50, 50, 50, 50 };
+    /// Which mix the deck is monitoring, as last read from it or last chosen.
+    MixId _mix = MixId::Creator;
+
+    /// Every track's level in both mixes, as last read from the deck or last
+    /// written to it.
+    ///
+    /// A cache of the deck's own registers rather than a state of this driver's:
+    /// the deck reports a turn as a relative counter, so somebody has to hold the
+    /// absolute value, but what that value *is* comes from the hardware. The
+    /// rings display the selected mix's row, so this is also what the deck is
+    /// showing.
+    std::array<std::array<Level, KnobCount>, MixCount> _levels {};
 
     /// Serialises writes: the host may push a frame from one thread while
     /// another drives poll().

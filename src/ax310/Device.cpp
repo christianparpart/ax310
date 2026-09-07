@@ -60,9 +60,6 @@ namespace
     /// software pauses between them and the deck does not come back without it.
     constexpr std::chrono::milliseconds CommandGap { 10 };
 
-    /// Scale from the hardware's 0-20 knob range to the 0-100 the UI speaks.
-    constexpr int VolumePercentPerStep = 5;
-
     /// Leading bytes of a report to log.
     constexpr std::size_t LoggedPrefixBytes = 16;
 
@@ -219,6 +216,12 @@ std::expected<ConnectionState, DeviceError> Device::connect()
     // makes the chain start where this project puts it.
     applyEffectState();
 
+    adoptTheDecksOwnState();
+
+    // Last, and after the level reads that precede it rather than before them:
+    // choosing a mix writes a knob-ring record to the same address these use, and
+    // a run of records to one address is what the deck applies only some of.
+    //
     // The captured sequence lights two of the four buttons and leaves the other
     // two dark: it writes those two a blue that the byte pair it carries does not
     // show. It also imposes whichever colours the person whose session was
@@ -427,18 +430,57 @@ std::expected<void, DeviceError> Device::setLevel(MixId mix, KnobId knob, Level 
 
     // Not fenced with SettingsTransaction, matching the vendor: it brackets mode
     // changes and leaves a level drag unbracketed.
-    return writeProperty(protocol::levelAddressOf(block, knob), values);
+    auto written = writeProperty(protocol::levelAddressOf(block, knob), values);
+
+    // The microphone takes two writes where every other track takes one. The
+    // vendor's captures show 0x35 carrying the same value alongside the level
+    // whenever the Mic slider moves, and nothing else in the block behaves that
+    // way. Only the creator mix: 0x35 is a single register and the pairing has
+    // only ever been seen against 0x27.
+    if (written && knob == KnobId::Mic && mix == MixId::Creator)
+        written = writeProperty(std::to_underlying(protocol::Property::KnobPropertyAt35), values);
+
+    // The cache follows the deck, so it moves only once the deck has been told.
+    // Advancing it on a failed write is what leaves the rings, the panel and this
+    // driver holding three different answers.
+    if (written)
+        _levels[indexOf(mix)][indexOf(knob)] = level;
+
+    return written;
 }
 
-std::expected<Level, DeviceError> Device::level(MixId mix, KnobId knob)
+Level Device::level(MixId mix, KnobId knob) const noexcept
 {
-    auto const block =
-        mix == MixId::Creator ? protocol::Property::CreatorMixLevels : protocol::Property::AudienceMixLevels;
+    return _levels[indexOf(mix)][indexOf(knob)];
+}
 
-    std::array<std::uint8_t, 1> values {};
-    return readProperty(protocol::levelAddressOf(block, knob), values).transform([&values] {
-        return Level::fromSteps(values[0]);
-    });
+std::expected<void, DeviceError> Device::readLevels()
+{
+    std::expected<void, DeviceError> outcome {};
+
+    for (auto const mix: AllMixes)
+    {
+        auto const block = mix == MixId::Creator ? protocol::Property::CreatorMixLevels
+                                                 : protocol::Property::AudienceMixLevels;
+
+        for (auto const knob: AllKnobs)
+        {
+            std::array<std::uint8_t, 1> values {};
+            if (auto const read = readProperty(protocol::levelAddressOf(block, knob), values); !read)
+            {
+                // Reported once, and the rest are still attempted: a deck that
+                // answers eleven of twelve is better cached from eleven than
+                // abandoned at the first refusal.
+                if (outcome)
+                    outcome = std::unexpected(read.error());
+                continue;
+            }
+
+            _levels[indexOf(mix)][indexOf(knob)] = Level::fromSteps(values[0]);
+        }
+    }
+
+    return outcome;
 }
 
 std::expected<void, DeviceError> Device::selectMix(MixId mix)
@@ -470,7 +512,28 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
         .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
         .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
-        .and_then([&] { return writeProperty(fence, close); });
+        .and_then([&] { return writeProperty(fence, close); })
+        .transform([&] { _mix = mix; });
+}
+
+MixId Device::selectedMix() const noexcept
+{
+    return _mix;
+}
+
+std::expected<MixId, DeviceError> Device::readSelectedMix()
+{
+    std::array<std::uint8_t, 1> values {};
+    return readProperty(std::to_underlying(protocol::Property::SelectedMix), values)
+        .and_then([&values]() -> std::expected<MixId, DeviceError> {
+            // Anything outside the two the register is documented to carry is a
+            // reply this driver cannot act on, and guessing a mix would put the
+            // rings and the audio somewhere nobody asked for.
+            if (values[0] >= MixCount)
+                return std::unexpected(DeviceError::ReadFailed);
+
+            return static_cast<MixId>(values[0]);
+        });
 }
 
 std::expected<void, DeviceError> Device::setParameter(protocol::Parameter parameter, int value)
@@ -691,6 +754,35 @@ void Device::applyEffectState()
                   protocol::nameIn(protocol::FramedCommandNames, std::to_underlying(command)),
                   describe(sent.error()));
     }
+}
+
+void Device::adoptTheDecksOwnState()
+{
+    // The restore above puts the deck back on whichever mix it was monitoring
+    // before the handshake, so which mix that is has to be asked rather than
+    // assumed -- and the ring colour cannot be restored with it, because it lives
+    // in a 0xc0 record rather than a property and the handshake has just written
+    // creator blue over it. Selecting the mix the deck came back on writes that
+    // colour, so the rings, the audio and whatever draws this agree again.
+    if (auto const mix = readSelectedMix(); mix)
+    {
+        if (auto const chosen = selectMix(*mix); !chosen)
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not select the {} mix the deck came up on: {}",
+                  nameOf(*mix),
+                  describe(chosen.error()));
+    }
+    else
+    {
+        logTo(_logger, LogLevel::Warning, "could not read the selected mix: {}", describe(mix.error()));
+    }
+
+    // Twelve round trips, and worth every one: a relative knob turn needs an
+    // absolute level to move, and this is the only place that level comes from
+    // the hardware rather than from a guess.
+    if (auto const read = readLevels(); !read)
+        logTo(_logger, LogLevel::Warning, "could not read the levels: {}", describe(read.error()));
 }
 
 void Device::lightButtonsWithDefaults()
@@ -959,12 +1051,30 @@ void Device::dispatchKnobValues(protocol::InputReport const& report)
         if (delta == 0)
             continue;
 
-        auto const volume = std::clamp(_volumes[index] + (delta * VolumePercentPerStep), 0, 100);
-        if (volume == _volumes[index])
+        // The turn is relative, so it moves whatever the deck last said this
+        // track was -- in the mix the deck is monitoring, because that is the one
+        // the knob is operating. Reading the base from anywhere else is what made
+        // a turn after a mix switch jump to a level nobody had set.
+        auto const& held = _levels[indexOf(_mix)][index];
+        auto const wanted = Level::fromPercent(held.asPercent() + (delta * Level::PercentPerStep));
+        if (wanted == held)
             continue;
 
-        _volumes[index] = volume;
-        _listener.onDeviceEvent(KnobVolumeChanged { .knob = knob, .volume = volume });
+        // Applied here rather than left to a listener: the deck reports the turn
+        // and changes nothing itself, so a driver that only announces it leaves
+        // the knobs moving, the numbers moving, and the audio where it was.
+        if (auto const written = setLevel(_mix, knob, wanted); !written)
+        {
+            logTo(_logger,
+                  LogLevel::Warning,
+                  "could not apply the {} knob's turn: {}",
+                  nameOf(knob),
+                  describe(written.error()));
+            continue;
+        }
+
+        _listener.onDeviceEvent(
+            KnobVolumeChanged { .mix = _mix, .knob = knob, .volume = wanted.asPercent() });
     }
 }
 
