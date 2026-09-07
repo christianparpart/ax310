@@ -1516,6 +1516,43 @@ TEST_CASE("the audience mix's microphone takes one write", "[device][level]")
     CHECK(sent[0].bytes[3] == static_cast<std::uint8_t>(protocol::Property::AudienceMixLevels));
 }
 
+TEST_CASE("a run of level writes is spaced", "[device][level]")
+{
+    Harness harness;
+    harness.holdLevels(10);
+    harness.connectInControlMode();
+
+    // A dial sends one of these per detent. The deck applies only some of a run
+    // sent back to back, so a fast turn lands on whichever it kept -- from the
+    // desk, a level that jumps up and settles below where the knob was turned.
+    for (int step = 0; step < 4; ++step)
+        REQUIRE(harness.device.setLevel(MixId::Creator, KnobId::System, Level::fromSteps(10 + step))
+                    .has_value());
+
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() == 4);
+    for (std::size_t index = 1; index < sent.size(); ++index)
+    {
+        INFO("between level write " << index - 1 << " and " << index);
+        CHECK(sent[index].at > sent[index - 1].at);
+    }
+}
+
+TEST_CASE("the microphone's two writes are spaced from each other", "[device][level]")
+{
+    Harness harness;
+    harness.holdLevels(10);
+    harness.connectInControlMode();
+
+    // The Mic is the one track that sends two, which makes it the densest run a
+    // dial can produce and the first place a missing gap would show.
+    REQUIRE(harness.device.setLevel(MixId::Creator, KnobId::Mic, Level::fromSteps(6)).has_value());
+
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[1].at > sent[0].at);
+}
+
 TEST_CASE("the levels read back from the deck", "[device][level]")
 {
     Harness harness;

@@ -429,7 +429,9 @@ std::expected<void, DeviceError> Device::setLevel(MixId mix, KnobId knob, Level 
     std::array<std::uint8_t, 1> const values { level.steps() };
 
     // Not fenced with SettingsTransaction, matching the vendor: it brackets mode
-    // changes and leaves a level drag unbracketed.
+    // changes and leaves a level drag unbracketed. Spaced all the same, because
+    // a dial is a run of writes and the deck does not take those back to back.
+    spaceLevelWrites();
     auto written = writeProperty(protocol::levelAddressOf(block, knob), values);
 
     // The microphone takes two writes where every other track takes one. The
@@ -438,20 +440,47 @@ std::expected<void, DeviceError> Device::setLevel(MixId mix, KnobId knob, Level 
     // way. Only the creator mix: 0x35 is a single register and the pairing has
     // only ever been seen against 0x27.
     if (written && knob == KnobId::Mic && mix == MixId::Creator)
+    {
+        spaceLevelWrites();
         written = writeProperty(std::to_underlying(protocol::Property::KnobPropertyAt35), values);
+    }
 
     // The cache follows the deck, so it moves only once the deck has been told.
     // Advancing it on a failed write is what leaves the rings, the panel and this
     // driver holding three different answers.
     if (written)
+    {
+        std::lock_guard<std::mutex> const lock { _stateMutex };
         _levels[indexOf(mix)][indexOf(knob)] = level;
+    }
 
     return written;
 }
 
-Level Device::level(MixId mix, KnobId knob) const noexcept
+Level Device::level(MixId mix, KnobId knob) const
 {
+    std::lock_guard<std::mutex> const lock { _stateMutex };
     return _levels[indexOf(mix)][indexOf(knob)];
+}
+
+void Device::spaceLevelWrites()
+{
+    std::optional<std::chrono::steady_clock::time_point> last;
+    {
+        std::lock_guard<std::mutex> const lock { _stateMutex };
+        last = _lastLevelWrite;
+    }
+
+    if (last)
+    {
+        auto const since =
+            std::chrono::duration_cast<std::chrono::milliseconds>(_clock.now() - *last);
+        if (since < CommandGap)
+            _clock.sleepFor(CommandGap - since);
+    }
+
+    std::lock_guard<std::mutex> const lock { _stateMutex };
+    _lastLevelWrite = _clock.now();
 }
 
 std::expected<void, DeviceError> Device::readLevels()
@@ -476,6 +505,7 @@ std::expected<void, DeviceError> Device::readLevels()
                 continue;
             }
 
+            std::lock_guard<std::mutex> const lock { _stateMutex };
             _levels[indexOf(mix)][indexOf(knob)] = Level::fromSteps(values[0]);
         }
     }
@@ -513,11 +543,15 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
         .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
         .and_then([&] { return writeProperty(fence, close); })
-        .transform([&] { _mix = mix; });
+        .transform([&] {
+            std::lock_guard<std::mutex> const lock { _stateMutex };
+            _mix = mix;
+        });
 }
 
-MixId Device::selectedMix() const noexcept
+MixId Device::selectedMix() const
 {
+    std::lock_guard<std::mutex> const lock { _stateMutex };
     return _mix;
 }
 
@@ -1055,7 +1089,17 @@ void Device::dispatchKnobValues(protocol::InputReport const& report)
         // track was -- in the mix the deck is monitoring, because that is the one
         // the knob is operating. Reading the base from anywhere else is what made
         // a turn after a mix switch jump to a level nobody had set.
-        auto const& held = _levels[indexOf(_mix)][index];
+        //
+        // Taken as a copy and the lock let go before the write below, which takes
+        // it again to record what landed.
+        MixId mix {};
+        Level held {};
+        {
+            std::lock_guard<std::mutex> const lock { _stateMutex };
+            mix = _mix;
+            held = _levels[indexOf(mix)][index];
+        }
+
         auto const wanted = Level::fromPercent(held.asPercent() + (delta * Level::PercentPerStep));
         if (wanted == held)
             continue;
@@ -1063,7 +1107,7 @@ void Device::dispatchKnobValues(protocol::InputReport const& report)
         // Applied here rather than left to a listener: the deck reports the turn
         // and changes nothing itself, so a driver that only announces it leaves
         // the knobs moving, the numbers moving, and the audio where it was.
-        if (auto const written = setLevel(_mix, knob, wanted); !written)
+        if (auto const written = setLevel(mix, knob, wanted); !written)
         {
             logTo(_logger,
                   LogLevel::Warning,
@@ -1074,7 +1118,7 @@ void Device::dispatchKnobValues(protocol::InputReport const& report)
         }
 
         _listener.onDeviceEvent(
-            KnobVolumeChanged { .mix = _mix, .knob = knob, .volume = wanted.asPercent() });
+            KnobVolumeChanged { .mix = mix, .knob = knob, .volume = wanted.asPercent() });
     }
 }
 

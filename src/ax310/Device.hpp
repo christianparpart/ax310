@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <expected>
 #include <mutex>
+#include <optional>
 #include <span>
 
 namespace ax310
@@ -192,6 +193,13 @@ class Device
     /// not light is not a reason to refuse the deck.
     void lightButtonsWithDefaults();
 
+    /// Waits until a level write would not crowd the one before it.
+    ///
+    /// A dial sends one write per detent and the deck applies only some of a run
+    /// sent back to back, so a fast turn lands on whichever of them it kept.
+    /// Every other run of writes this driver sends is already spaced.
+    void spaceLevelWrites();
+
     /// Reads back the mix and the levels the deck came up holding, and puts the
     /// ring colour where that mix says it should be.
     ///
@@ -223,7 +231,7 @@ class Device
     /// @return What the deck last said this level was, or what was last written
     ///         to it. A cache of the deck's own register and never a value of
     ///         this driver's own -- readLevels() is what fills it.
-    [[nodiscard]] Level level(MixId mix, KnobId knob) const noexcept;
+    [[nodiscard]] Level level(MixId mix, KnobId knob) const;
 
     /// Reads every track's level in both mixes back from the deck.
     ///
@@ -246,7 +254,7 @@ class Device
 
     /// @return Which mix the deck was last read to be monitoring, or last told
     ///         to monitor.
-    [[nodiscard]] MixId selectedMix() const noexcept;
+    [[nodiscard]] MixId selectedMix() const;
 
     /// Reads which mix the deck is monitoring.
     ///
@@ -388,6 +396,14 @@ class Device
     std::array<protocol::FramedDefault, protocol::FramedDefaults.size()> _framedBodies =
         protocol::FramedDefaults;
 
+    /// Guards everything below it that both threads reach.
+    ///
+    /// The poll thread moves the mix's levels when a knob turns; the thread
+    /// driving the interface reads them to draw, and writes them when somebody
+    /// drags a track or switches mix. Separate from _writeMutex, which is held
+    /// across a transfer -- these are only ever held for an assignment.
+    mutable std::mutex _stateMutex;
+
     /// Which mix the deck is monitoring, as last read from it or last chosen.
     MixId _mix = MixId::Creator;
 
@@ -400,6 +416,10 @@ class Device
     /// rings display the selected mix's row, so this is also what the deck is
     /// showing.
     std::array<std::array<Level, KnobCount>, MixCount> _levels {};
+
+    /// When the last level write went out, so a run of them can be spaced.
+    /// Empty until one has.
+    std::optional<std::chrono::steady_clock::time_point> _lastLevelWrite;
 
     /// Serialises writes: the host may push a frame from one thread while
     /// another drives poll().
