@@ -208,14 +208,15 @@ if(AX310_BUILD_TESTS)
             PASS_REGULAR_EXPRESSION "error: Unexpected argument 'garbage'."
             FAIL_REGULAR_EXPRESSION "Sanitizer;Opened AX310")
 
-        # A second run of the same binary, against the real scene graph.
+        # A second run of the same binary, against a real windowing system.
         #
-        # Everything above pins the software renderer, which is what lets it run
-        # on a machine with no screen and no driver -- and it also means those
-        # tests cannot see how the deck's frames are actually made, which is an
-        # unmapped window grabbed through the RHI. A component can draw perfectly
-        # under QPainter and not at all there; one did, and the panel went to the
-        # hardware with every ring missing while the whole suite was green.
+        # Everything above runs offscreen, which is what lets it work on a machine
+        # with no screen -- and an offscreen window is not the thing the deck's
+        # panel is. That one is created on a real compositor and never mapped, and
+        # grabbing it repeatedly is where components have twice behaved
+        # differently: first drawing nothing after the first grab, then taking a
+        # new geometry and keeping an old colour. Both went to the hardware while
+        # the whole suite was green.
         #
         # It skips itself where there is no display, which includes CI. Leak
         # detection is off for it alone: it brings up the GL driver, Wayland and

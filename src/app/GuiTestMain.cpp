@@ -25,18 +25,23 @@ int main(int argc, char* argv[])
 {
     ax310::SystemConsole console;
 
-    // Pinning the software scene graph is what lets these run with no display and
-    // no driver -- and it also hides one whole class of defect, because the deck's
-    // frames are not produced that way. They come from a window the compositor
-    // never maps, grabbed through the RHI, where a component can render perfectly
-    // under QPainter and not at all. The native run exists for those, and needs a
-    // real display; it skips itself where there is none, which includes CI.
+    // The software scene graph, in both runs, because it is what main() pins.
+    // Through the RHI an unmapped window's Shapes keep the colour they were first
+    // drawn with, so the deck was sent a panel whose header said one mix and whose
+    // arcs said the other -- and a suite drawing the deck's panel any other way
+    // than the application does is not testing the application.
+    //
+    // What the native run varies is the *platform*: a real Wayland or X11 session
+    // rather than the offscreen one, which is where a window that is created and
+    // never mapped behaves like the deck's panel does.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+
     if (qEnvironmentVariableIsSet("AX310_TEST_NATIVE_BACKEND"))
     {
         // Gated on a Wayland or X11 session specifically, rather than on "a
-        // display" in the abstract. The defect this run exists to catch was found
-        // on Wayland, and nobody has established that the same throwaway-RHI
-        // behaviour shows up under another windowing system -- so on Windows or
+        // display" in the abstract. The behaviour these cases exist to pin was
+        // found on Wayland, and nobody has established that an unmapped window
+        // behaves the same under another windowing system -- so on Windows or
         // macOS this skips rather than pretending to have checked something.
         if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") && qEnvironmentVariableIsEmpty("DISPLAY"))
         {
@@ -47,7 +52,6 @@ int main(int argc, char* argv[])
     else
     {
         qputenv("QT_QPA_PLATFORM", "offscreen");
-        qputenv("QT_QUICK_BACKEND", "software");
 
 #ifdef _WIN32
         // The offscreen platform has no font database of its own and Qt no
@@ -63,10 +67,6 @@ int main(int argc, char* argv[])
         if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR"))
             qputenv("QT_QPA_FONTDIR", AX310_BUNDLED_FONT_DIR);
 #endif
-
-        // Deterministic frames: without this the renderer is free to skip or
-        // coalesce updates, and a grab can catch a half-drawn scene.
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     }
 
     QGuiApplication const application { argc, argv };

@@ -14,6 +14,7 @@
 
 #include <BridgeHarness.hpp>
 
+#include <QBuffer>
 #include <QColor>
 #include <QEventLoop>
 #include <QImage>
@@ -25,6 +26,8 @@
 #include <QQuickItem>
 #include <QQuickView>
 #include <QQuickWindow>
+#include <QRect>
+#include <QSGRendererInterface>
 #include <QTimer>
 #include <QUrl>
 
@@ -43,6 +46,12 @@ namespace
 /// The deck's panel, which is the one size the hardware accepts.
 constexpr int PanelWidth = 800;
 constexpr int PanelHeight = 480;
+
+/// How wide one gauge is on the panel, from ScreenUI's gaugeSize.
+constexpr int GaugeWidth = 133;
+
+/// The quality main.cpp encodes a frame at before pushing it to the deck.
+constexpr int DeckFrameQuality = 80;
 
 /// Everything a rendered screen needs, with no hardware behind it.
 ///
@@ -115,6 +124,31 @@ struct RenderHarness: tests::BridgeHarness
 /// @param hue The hue to look for, in degrees.
 /// @param tolerance How far off that hue still counts.
 /// @return How many reasonably saturated pixels sit near that hue.
+/// @param image The rendering to inspect.
+/// @param band The part of it to look at.
+/// @param hue The hue to look for, in degrees.
+/// @param tolerance How far off that hue still counts.
+/// @return How many reasonably saturated pixels in @p band sit near that hue.
+[[nodiscard]] std::size_t pixelsNearHueIn(QImage const& image, QRect const& band, int hue,
+                                          int tolerance = 26)
+{
+    std::size_t found = 0;
+    for (int y = band.top(); y < band.bottom(); y += 2)
+    {
+        for (int x = band.left(); x < band.right(); x += 2)
+        {
+            auto const colour = QColor::fromRgb(image.pixel(x, y)).toHsv();
+            if (colour.saturation() < 90 || colour.value() < 60)
+                continue;
+            auto const difference = std::abs(colour.hue() - hue);
+            if (std::min(difference, 360 - difference) <= tolerance)
+                ++found;
+        }
+    }
+
+    return found;
+}
+
 [[nodiscard]] std::size_t pixelsNearHue(QImage const& image, int hue, int tolerance = 26)
 {
     std::size_t found = 0;
@@ -265,10 +299,23 @@ TEST_CASE("the panel is drawn in the colour of the mix being edited", "[gui][ren
     CHECK(audienceOrange > audienceBlue * 3);
 }
 
-TEST_CASE("the deck's panel recolours when the mix changes", "[gui][render][mix]")
+TEST_CASE("the deck's panel recolours when the mix changes", "[gui][render][mix][native]")
 {
+    // The panel's own arrangement, which nothing else here had: the software
+    // scene graph main() pins, and a window created and never mapped. Through
+    // the GPU scene graph this window's Shapes keep the colour they were first
+    // drawn with however often they are grabbed, so the deck was sent a panel
+    // whose header and tiles said one mix and whose arcs said the other.
+    //
+    // Registered under [native] as well, so it runs against the real platform
+    // rather than only the offscreen one -- that is where the difference is.
+    // Which scene graph both runs use is settled once, in GuiTestMain.
     RenderHarness harness;
-    harness.connectWithLevels({ 15, 8, 14, 20, 18, 13 }, { 6, 16, 4, 11, 9, 20 });
+    // The same level in both mixes, so each gauge's two arcs sweep the same
+    // distance and the thick one -- the mix being edited -- must win its own
+    // gauge on colour alone. Levels that differed would let a loud outer arc
+    // beat a short inner one honestly, and hide a gauge that never repainted.
+    harness.connectWithLevels({ 15, 15, 15, 15, 15, 15 }, { 15, 15, 15, 15, 15, 15 });
 
     // One view, created and never mapped, grabbed again and again. That is what
     // the application does with the deck's panel, and what nothing else here
@@ -308,13 +355,21 @@ TEST_CASE("the deck's panel recolours when the mix changes", "[gui][render][mix]
     // Grabbed on a timer throughout, the way the application feeds the deck --
     // including while the cross-fade is running, which a single grab after the
     // event loop has settled never sees.
+    // Scaled the way main.cpp scales it. A grab comes back at whatever the
+    // display's device pixel ratio imposes -- 1600x960 on a doubled desktop --
+    // and the deck is sent 800x480, which is also what the bands below are in.
     QImage latest;
     QTimer grabber;
     grabber.setInterval(33);
     QObject::connect(&grabber, &QTimer::timeout, [&view, &latest] {
         auto const frame = view.grabWindow();
-        if (!frame.isNull())
-            latest = frame;
+        if (frame.isNull())
+            return;
+
+        latest = frame.size() == QSize(PanelWidth, PanelHeight)
+                     ? frame
+                     : frame.scaled(PanelWidth, PanelHeight, Qt::IgnoreAspectRatio,
+                                    Qt::SmoothTransformation);
     });
     grabber.start();
 
@@ -331,14 +386,72 @@ TEST_CASE("the deck's panel recolours when the mix changes", "[gui][render][mix]
             harness.bridge.selectMix(static_cast<int>(indexOf(mix)));
             RenderHarness::settle();
 
-            auto const wanted = pixelsNearHue(latest, hueOf(mix));
-            auto const other =
-                pixelsNearHue(latest, hueOf(mix == MixId::Creator ? MixId::Audience : MixId::Creator));
+            // Gauge by gauge, not over the whole panel. A frame where four of
+            // the six repainted and two kept the colour they had still has a
+            // clear majority in the new mix, so a count over the whole image
+            // says everything is fine while the panel is visibly wrong.
+            auto const otherMix = mix == MixId::Creator ? MixId::Audience : MixId::Creator;
+            for (std::size_t gauge = 0; gauge < KnobCount; ++gauge)
+            {
+                QRect const band { 1 + (static_cast<int>(gauge) * GaugeWidth) + 12,
+                                   130,
+                                   GaugeWidth - 24,
+                                   110 };
+                auto const wanted = pixelsNearHueIn(latest, band, hueOf(mix));
+                auto const other = pixelsNearHueIn(latest, band, hueOf(otherMix));
 
-            INFO("round " << round << ", the " << nameOf(mix) << " mix");
-            UNSCOPED_INFO(wanted << " of its own hue against " << other << " of the other's");
-            CHECK(wanted > other);
+                INFO("round " << round << ", the " << nameOf(mix) << " mix, gauge " << gauge);
+                UNSCOPED_INFO(wanted << " of its own hue against " << other << " of the other's");
+                CHECK(wanted > other);
+            }
         }
+    }
+}
+
+TEST_CASE("the arcs survive the encoding the deck is sent", "[gui][render][mix]")
+{
+    RenderHarness harness;
+    harness.connectWithLevels({ 15, 15, 15, 15, 15, 15 }, { 15, 15, 15, 15, 15, 15 });
+
+    // The panel is not what the deck sees. The deck sees a JPEG, and JPEG stores
+    // colour at half resolution in each direction -- so a thin saturated arc
+    // beside a thin arc of another hue is exactly the thing it is worst at. The
+    // desktop's preview never goes through this, which is why it can look right
+    // while the deck does not.
+    auto const panel = harness.renderPanel();
+    REQUIRE_FALSE(panel.isNull());
+
+    QByteArray encoded;
+    QBuffer buffer { &encoded };
+    REQUIRE(buffer.open(QIODevice::WriteOnly));
+    REQUIRE(panel.save(&buffer, "JPG", DeckFrameQuality));
+
+    QImage decoded;
+    REQUIRE(decoded.loadFromData(encoded, "JPG"));
+    REQUIRE(decoded.size() == panel.size());
+
+    auto const hueOf = [](MixId mix) {
+        auto const& colour = protocol::MixRingColours[indexOf(mix)];
+        return QColor(colour.red, colour.green, colour.blue).hue();
+    };
+
+    for (std::size_t gauge = 0; gauge < KnobCount; ++gauge)
+    {
+        QRect const band { 1 + (static_cast<int>(gauge) * GaugeWidth) + 12,
+                           130,
+                           GaugeWidth - 24,
+                           110 };
+
+        auto const before = pixelsNearHueIn(panel, band, hueOf(MixId::Creator));
+        auto const after = pixelsNearHueIn(decoded, band, hueOf(MixId::Creator));
+        auto const bled = pixelsNearHueIn(decoded, band, hueOf(MixId::Audience));
+
+        INFO("gauge " << gauge);
+        UNSCOPED_INFO("creator hue " << before << " before the encode, " << after << " after; "
+                                     << bled << " of the other mix's hue after");
+
+        // The mix being edited still has to be the mix the gauge looks like.
+        CHECK(after > bled);
     }
 }
 

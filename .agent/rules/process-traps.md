@@ -62,6 +62,21 @@ the byte: regenerating the screenshots after the fix produced no diff at all.
 now a native-backend CTest entry that fails on this, and it is the only test in
 the suite that can.
 
+That was half of it. Through the RHI, an unmapped window's Shapes take a new
+**geometry** and keep their **old colour** for as long as the window lives.
+Measured: switching the mix leaves every ring arc the colour it had while the
+header, the tiles and the numerals repaint, and dropping a track's level moves
+that same arc's sweep in the very next grab -- so the path is live and only the
+colour is stale. What the deck received was a panel saying AUDIENCE MIX in orange
+with six blue rings.
+
+So `main()` pins `QSGRendererInterface::Software` for the whole application, and
+the software scene graph follows both. Which means the suite pinning software was
+never the wrong renderer for the panel -- it was the right one, and the
+application was the thing not using it. A test can only see this by doing what
+the application does: create the window and never map it, and grab it more than
+once.
+
 **`pkill -f` matches the shell that runs it.** The pattern is tested against every
 process's full command line, and the command line of the shell executing `pkill -f
 "http.server 8787"` contains that string — so the shell kills itself, the rest of

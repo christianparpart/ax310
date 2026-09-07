@@ -105,6 +105,22 @@ extern "C" int __lsan_is_turned_off()
 
 int main(int argc, char* argv[])
 {
+    // The software scene graph, for both windows, because of what the deck's
+    // panel is: a window the compositor never maps, rendered by grabbing it
+    // again and again.
+    //
+    // Through the GPU scene graph that window's Shapes take a new geometry and
+    // keep their old colour. Measured rather than deduced: switching the mix
+    // leaves every arc the colour it had while the header, the tiles and the
+    // numerals all repaint, and dropping a track's level moves that arc's sweep
+    // in the very next grab -- so the path is live, and only the colour is
+    // stale. The same scene, the same grabs, drawn in software, follows both.
+    //
+    // It is the whole panel that is wrong otherwise, and the panel is what this
+    // program is for. The desktop window pays for it by drawing six rings and
+    // some text on the CPU, which is not a cost worth a broken deck screen.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+
     ax310::SystemConsole console;
     QGuiApplication app(argc, argv);
 

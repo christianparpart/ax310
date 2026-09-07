@@ -91,6 +91,10 @@ Item {
             // first grab and then nothing at all -- the panel went out with the
             // numerals and legends intact and every arc missing. GeometryRenderer
             // triangulates on the CPU and survives every grab.
+            //
+            // It is not enough on its own. Through the RHI these arcs also take a
+            // new geometry and keep their old colour, which is why main() pins
+            // the software scene graph for the whole application.
             preferredRendererType: Shape.GeometryRenderer
 
             // The other mix: present but quiet.
