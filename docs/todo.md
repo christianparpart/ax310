@@ -197,6 +197,11 @@ captures name them.
   and sent immediately before `CompressorEnable`. It is not in `InitPayloads`,
   which came from an older capture, and no effect capture triggers it. The
   position suggests a paired enable; nothing else does.
+- **The name-table coverage check runs on one compiler.** It needs P2996
+  reflection, which is C++26; GCC 16 implements it behind `-freflection` and
+  Clang 22 and MSVC do not. `src/checks/` probes for it and contributes nothing
+  where it is missing, so the gcc-release preset carries the check and the others
+  are unaffected. Drop the probe once two more toolchains catch up.
 - **`PreservedAddresses` reads `0x11` with length 3; the vendor reads it with 1.**
   The vendor *writes* three bytes there, so three is a legal write length, but no
   capture shows a three-byte read. Since the deck does not clear its reply buffer,

@@ -3,6 +3,7 @@
 # application, which is the layer allowed to depend on Qt.
 add_subdirectory(ax310)
 add_subdirectory(tools)
+add_subdirectory(checks)
 
 # The Qt layer lives in a library rather than straight in the executable, so the
 # interface can be rendered by something other than the application -- which is
