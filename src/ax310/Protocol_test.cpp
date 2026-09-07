@@ -12,6 +12,7 @@
 #include <ios>
 #include <span>
 #include <string>
+#include <utility>
 
 using namespace ax310;
 
@@ -383,7 +384,7 @@ TEST_CASE("the spec's tables have no phantom rows", "[protocol][spec]")
     {
         UNSCOPED_INFO("property " << static_cast<int>(row.value));
         CHECK_FALSE(row.name.empty());
-        CHECK(nameIn(PropertyNames, static_cast<std::uint8_t>(row.value)) == row.name);
+        CHECK(nameIn(PropertyNames, std::to_underlying(row.value)) == row.name);
     }
     for (auto const& row: FramedCommandNames)
     {
@@ -393,12 +394,12 @@ TEST_CASE("the spec's tables have no phantom rows", "[protocol][spec]")
         // with a length longer than its initialiser list used to leave behind.
         // std::to_array removed that possibility and the enumerated value type
         // removed the rest: a row can only carry a command the enum defines.
-        CHECK(static_cast<std::uint8_t>(row.value) != 0x00);
+        CHECK(std::to_underlying(row.value) != 0x00);
         CHECK_FALSE(row.name.empty());
 
         // And every row is reachable through the lookup callers actually use,
         // which is what a duplicate address would break.
-        CHECK(nameIn(FramedCommandNames, static_cast<std::uint8_t>(row.value)) == row.name);
+        CHECK(nameIn(FramedCommandNames, std::to_underlying(row.value)) == row.name);
     }
     for (auto const& row: PreservedAddresses)
         CHECK(row.length > 0);
@@ -436,14 +437,14 @@ TEST_CASE("the two level blocks are contiguous and in knob order", "[protocol][s
     // contiguous. That is a property of levelAddressOf(), not of a table.
     for (auto const block: { Property::CreatorMixLevels, Property::AudienceMixLevels })
     {
-        auto const base = static_cast<std::uint8_t>(block);
+        auto const base = std::to_underlying(block);
         for (auto const knob: AllKnobs)
             CHECK(levelAddressOf(block, knob) == base + indexOf(knob));
     }
 
     // And they do not overlap, which is what makes two independent mixes possible.
-    auto const creatorEnd = static_cast<std::uint8_t>(Property::CreatorMixLevels) + KnobCount;
-    CHECK(creatorEnd <= static_cast<std::uint8_t>(Property::AudienceMixLevels));
+    auto const creatorEnd = std::to_underlying(Property::CreatorMixLevels) + KnobCount;
+    CHECK(creatorEnd <= std::to_underlying(Property::AudienceMixLevels));
 }
 
 TEST_CASE("every parameter fits inside the body it is written into", "[protocol][spec]")

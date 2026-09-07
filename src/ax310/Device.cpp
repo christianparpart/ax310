@@ -385,7 +385,7 @@ std::expected<void, DeviceError> Device::sendFramed(protocol::FramedCommand comm
     payload[0] = protocol::FramedCommandMarker;
     payload[1] = 0x00;
     payload[2] = static_cast<std::uint8_t>(body.size() + protocol::FramedOverhead);
-    payload[3] = static_cast<std::uint8_t>(command);
+    payload[3] = std::to_underlying(command);
     std::ranges::copy(body, std::next(payload.begin(), 4));
     payload[payload[2] - 1] = protocol::framedChecksum(payload);
 

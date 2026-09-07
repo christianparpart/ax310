@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 
 /// Wire layout of the AX310's HID reports.
 ///
@@ -221,7 +222,7 @@ struct FirmwareVersion
     std::span<std::uint8_t const> reply) noexcept
 {
     constexpr std::size_t Needed = IdentityValuesOffset + 19;
-    if (reply.size() < Needed || reply[0] != static_cast<std::uint8_t>(CommandKind::Get)
+    if (reply.size() < Needed || reply[0] != std::to_underlying(CommandKind::Get)
         || reply[1] != IdentityGroup)
         return std::nullopt;
 
@@ -251,7 +252,7 @@ struct FirmwareVersion
 [[nodiscard]] constexpr std::span<std::uint8_t const> parseSerialNumber(
     std::span<std::uint8_t const> reply) noexcept
 {
-    if (reply.size() <= SerialValuesOffset || reply[0] != static_cast<std::uint8_t>(CommandKind::Get)
+    if (reply.size() <= SerialValuesOffset || reply[0] != std::to_underlying(CommandKind::Get)
         || reply[1] != SerialGroup)
         return {};
 
@@ -278,7 +279,7 @@ struct FirmwareVersion
                                           std::size_t length = 0) noexcept
 {
     Payload payload {};
-    payload[0] = static_cast<std::uint8_t>(kind);
+    payload[0] = std::to_underlying(kind);
     payload[1] = group;
     payload[2] = address;
     payload[3] = static_cast<std::uint8_t>(values.empty() ? length : values.size());
@@ -834,7 +835,7 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 /// @return The full 64-byte payload, ready to be framed and sent.
 [[nodiscard]] constexpr Payload setProperty(Property property, std::span<std::uint8_t const> values) noexcept
 {
-    return setPropertyAt(static_cast<std::uint8_t>(property), values);
+    return setPropertyAt(std::to_underlying(property), values);
 }
 
 /// @param property The property to write.
@@ -842,7 +843,7 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 /// @return The full 64-byte payload.
 [[nodiscard]] constexpr Payload setProperty(Property property, std::uint8_t value) noexcept
 {
-    return setPropertyAt(static_cast<std::uint8_t>(property), value);
+    return setPropertyAt(std::to_underlying(property), value);
 }
 
 /// @param property The property to read.
@@ -850,7 +851,7 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 /// @return The full 64-byte payload.
 [[nodiscard]] constexpr Payload getProperty(Property property, std::size_t length) noexcept
 {
-    return getPropertyAt(static_cast<std::uint8_t>(property), length);
+    return getPropertyAt(std::to_underlying(property), length);
 }
 
 /// @param block Either Property::CreatorMixLevels or Property::AudienceMixLevels.
@@ -862,7 +863,7 @@ inline constexpr std::size_t KnobPropertyLength = 7;
 /// hardware in both blocks.
 [[nodiscard]] constexpr std::uint8_t levelAddressOf(Property block, KnobId knob) noexcept
 {
-    return static_cast<std::uint8_t>(static_cast<std::uint8_t>(block) + indexOf(knob));
+    return static_cast<std::uint8_t>(std::to_underlying(block) + indexOf(knob));
 }
 
 /// Offsets within a feature-report reply, which keeps its leading report-id byte.
@@ -889,7 +890,7 @@ inline constexpr std::size_t ReplyValuesOffset = 5;
     if (reply.size() <= ReplyValuesOffset)
         return std::nullopt;
 
-    if (reply[ReplyKindOffset] != static_cast<std::uint8_t>(CommandKind::Get))
+    if (reply[ReplyKindOffset] != std::to_underlying(CommandKind::Get))
         return std::nullopt;
 
     if (reply[ReplyGroupOffset] != PropertyGroup || reply[ReplyAddressOffset] != address)
@@ -1395,7 +1396,7 @@ template <typename Enum, std::size_t N>
                                                 std::uint8_t value) noexcept
 {
     for (auto const& entry: table)
-        if (static_cast<std::uint8_t>(entry.value) == value)
+        if (std::to_underlying(entry.value) == value)
             return entry.name;
 
     return {};
@@ -1427,7 +1428,7 @@ template <typename Enum, std::size_t N>
     payload[0] = FramedCommandMarker;
     payload[1] = 0x00;
     payload[2] = static_cast<std::uint8_t>(body.size() + FramedOverhead);
-    payload[3] = static_cast<std::uint8_t>(command);
+    payload[3] = std::to_underlying(command);
     std::ranges::copy(body, std::next(payload.begin(), 4));
     payload[payload[2] - 1] = framedChecksum(payload);
     return payload;

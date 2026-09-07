@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 
 /// Vendor command sequences replayed from USB captures of the AVerMedia
 /// software.
@@ -237,9 +238,9 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
     // The two writes to 0x14 set the Line Out source to the audience mix. They are
     // identical and consecutive, so one of them does nothing.
     protocol::setProperty(protocol::Property::LineOutSource,
-                          static_cast<std::uint8_t>(LineOutSource::AudienceMix)),
+                          std::to_underlying(LineOutSource::AudienceMix)),
     protocol::setProperty(protocol::Property::LineOutSource,
-                          static_cast<std::uint8_t>(LineOutSource::AudienceMix)),
+                          std::to_underlying(LineOutSource::AudienceMix)),
     protocol::setProperty(protocol::Property::KnobLedSelect, std::uint8_t { 0x80 }),
     protocol::setPropertyAt(0x22, std::uint8_t { 0x12 }),
     // One byte at the block's base address, which is the Mic track and not the
@@ -258,7 +259,7 @@ inline constexpr std::array<protocol::Payload, 74> InitPayloads { {
 
     // Select the creator mix.
     protocol::setProperty(protocol::Property::SelectedMix,
-                          static_cast<std::uint8_t>(MixId::Creator)),
+                          std::to_underlying(MixId::Creator)),
 
     // A write in group 0x03, then the probe-and-commit pair a third time.
     protocol::commandAt(protocol::CommandKind::Set, 0x03, 0x01, {}, 0),

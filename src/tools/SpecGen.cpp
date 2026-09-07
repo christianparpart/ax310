@@ -31,6 +31,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace ax310;
@@ -249,8 +250,8 @@ void writeSpec(Document& out)
              "`[{}|{}] {} <address> <length> <values…>` — set and get. A reply carries the "
              "kind at byte {}, the group at {}, the address at {}, the length at {} and the "
              "values from {}.",
-             hex(static_cast<std::uint8_t>(CommandKind::Set)),
-             hex(static_cast<std::uint8_t>(CommandKind::Get)),
+             hex(std::to_underlying(CommandKind::Set)),
+             hex(std::to_underlying(CommandKind::Get)),
              hex(PropertyGroup),
              ReplyKindOffset,
              ReplyGroupOffset,
@@ -264,7 +265,7 @@ void writeSpec(Document& out)
     std::ranges::sort(byAddress, {}, &WireName<Property>::value);
     for (auto const& row: byAddress)
     {
-        auto const address = static_cast<std::uint8_t>(row.value);
+        auto const address = std::to_underlying(row.value);
         out.line("| `{}` | {} | {} | {} |",
                  hex(address),
                  orDash(row.name),
@@ -303,7 +304,7 @@ void writeSpec(Document& out)
     for (auto const mix: AllMixes)
     {
         auto const block = mix == MixId::Creator ? Property::CreatorMixLevels : Property::AudienceMixLevels;
-        out.put("| {} | `{}` |", nameOf(mix), hex(static_cast<std::uint8_t>(block)));
+        out.put("| {} | `{}` |", nameOf(mix), hex(std::to_underlying(block)));
         for (auto const knob: AllKnobs)
             out.put(" `{}` |", hex(levelAddressOf(block, knob)));
         out.line("");
@@ -315,7 +316,7 @@ void writeSpec(Document& out)
     out.line("");
     out.line("A family of its own -- `[{}] [{}] [level]` -- and the reason the panel's "
              "brightness was never found among the property registers: it is not there.",
-             hex(static_cast<std::uint8_t>(CommandKind::Set)),
+             hex(std::to_underlying(CommandKind::Set)),
              hex(DisplayGroup));
     out.line("");
     out.line("The level is a percentage. `{}` is not a brightness but a sentinel that turns "
@@ -342,7 +343,7 @@ void writeSpec(Document& out)
     out.line("| Command | Name |");
     out.line("| --- | --- |");
     for (auto const& row: FramedCommandNames)
-        out.line("| `{}` | {} |", hex(static_cast<std::uint8_t>(row.value)), orDash(row.name));
+        out.line("| `{}` | {} |", hex(std::to_underlying(row.value)), orDash(row.name));
     out.line("");
 
     out.line("### Parameters");
@@ -358,7 +359,7 @@ void writeSpec(Document& out)
         out.line("| {} | {} | `{}` | {} | {} | {}…{} | {} |",
                  EffectNames[static_cast<std::size_t>(row.effect)],
                  row.name,
-                 hex(static_cast<std::uint8_t>(row.command)),
+                 hex(std::to_underlying(row.command)),
                  row.bodyOffset,
                  describeEncoding(row.encoding),
                  row.minimum,
@@ -373,8 +374,8 @@ void writeSpec(Document& out)
     for (auto const& entry: FramedDefaults)
     {
         out.put("- `{}` ({}), {} bytes:",
-                hex(static_cast<std::uint8_t>(entry.command)),
-                orDash(nameIn(FramedCommandNames, static_cast<std::uint8_t>(entry.command))),
+                hex(std::to_underlying(entry.command)),
+                orDash(nameIn(FramedCommandNames, std::to_underlying(entry.command))),
                 entry.length);
         for (std::size_t index = 0; index < entry.length; ++index)
             out.put(" `{:02x}`", entry.body[index]);

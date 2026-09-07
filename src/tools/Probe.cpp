@@ -53,7 +53,7 @@ constexpr std::array<protocol::FramedCommand, 2> ToggleableEffects {
     payload[0] = protocol::FramedCommandMarker;
     payload[1] = 0x00;
     payload[2] = 0x06;
-    payload[3] = static_cast<std::uint8_t>(command);
+    payload[3] = std::to_underlying(command);
     payload[4] = value;
     payload[5] = protocol::framedChecksum(payload);
     return payload;
