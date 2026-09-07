@@ -1545,6 +1545,7 @@ int usage(IConsole& console, std::string_view program)
     writeErrorLine(console, "  --read <addr> <len>    read one register, both decimal or 0x-free hex");
     writeErrorLine(console, "  --effect <cmd> <0|1>   toggle one known effect enable");
     writeErrorLine(console, "  --level <1|2> <knob> <00..14>  set one track's level in one mix (hex)");
+    writeErrorLine(console, "  --mixer-mode <dual|creator|audience>  two independent mixes, or one shared");
     writeErrorLine(console, "  --meters [seconds]     watch the per-track meters, and report their peaks");
     writeErrorLine(console, "  --touches [seconds]    watch screen touches, including the unexplained flags byte");
     writeErrorLine(console, "  --inputs [seconds]     which bit each button and knob push produces, one at a time");
@@ -1619,6 +1620,50 @@ int usage(IConsole& console, std::string_view program)
     }
 
     return std::nullopt;
+}
+
+/// Sets whether the deck keeps its two mixes apart: `--mixer-mode`.
+///
+/// One byte carries the mode and the monitored mix together, so this takes the
+/// pair rather than pretending they are two settings. Dual is what gives each
+/// mix a profile of its own -- in single the deck copies the monitored mix's
+/// playback levels over the other block, so per-mix volumes do not survive.
+///
+/// @param transport An open control interface.
+/// @param console Where the narration goes.
+/// @param wanted One of dual, creator, audience.
+/// @return The process status.
+[[nodiscard]] int runMixerMode(HidApiTransport& transport, IConsole& console, std::string_view wanted)
+{
+    std::optional<std::uint8_t> value;
+    if (wanted == "dual")
+        value = protocol::KnobLedSelectForDualMix;
+    else if (wanted == "creator")
+        value = protocol::KnobLedSelectForMix[indexOf(MixId::Creator)];
+    else if (wanted == "audience")
+        value = protocol::KnobLedSelectForMix[indexOf(MixId::Audience)];
+
+    if (!value)
+    {
+        writeErrorLine(console, "usage: --mixer-mode <dual|creator|audience>");
+        writeErrorLine(console, "  dual      two independent mixes");
+        writeErrorLine(console, "  creator   one shared mix, monitoring the creator mix");
+        writeErrorLine(console, "  audience  one shared mix, monitoring the audience mix");
+        return EXIT_FAILURE;
+    }
+
+    std::array<std::uint8_t, 1> const values { *value };
+    auto const framed = protocol::frameFeatureReport(
+        protocol::setPropertyAt(std::to_underlying(protocol::Property::KnobLedSelect), values));
+
+    if (!transport.sendFeatureReport(framed))
+    {
+        writeErrorLine(console, "the write failed");
+        return EXIT_FAILURE;
+    }
+
+    writeLine(console, "mixer mode set to {} (0x21 = {:02x})", wanted, *value);
+    return EXIT_SUCCESS;
 }
 
 /// Dispatches the three commands that drive lights.
@@ -1719,6 +1764,9 @@ int main(int argc, char* argv[])
         writeLine(console, "");
         return EXIT_SUCCESS;
     }
+
+    if (command == "--mixer-mode" && argc == 3)
+        return runMixerMode(transport, console, arguments[2]);
 
     if (command == "--level" && argc == 5)
     {

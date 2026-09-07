@@ -591,6 +591,47 @@ established as the fix.** What settles it is a deck: switch back and forth
 several times and watch whether the rings follow, then take the order back to the
 vendor's and watch again.
 
+### Single mix mode collapses the playback tracks across both mixes
+
+`0x21` is not only which mix the rings show. It is the mixer *mode*, and the mode
+decides whether the two level blocks are independent at all.
+
+Measured with `ax310_probe`, no application running. Two distinct blocks were set:
+
+```
+creator  0x27   12 0c 0a 0a 0c 0e
+audience 0x2e   0e 0c 0a 08 06 04
+```
+
+Writing `0x21 = 0x80` -- single, monitoring the creator mix, which is what
+`Device::selectMix` sends -- left the creator block alone and changed the
+audience block to:
+
+```
+audience 0x2e   0e 0c 0a 0a 0c 0e
+                         ^^^^^^^^ the creator block's last three, copied
+```
+
+Tracks 3, 4 and 5 are **System, Game and Chat** -- the three host playback tracks
+from `scripts/setup-audio.sh`. Tracks 0, 1 and 2 are Mic, Line In and Console,
+the physical inputs, and they kept their own values. So a single mix means one
+mix *of the host's audio*: the deck copies the monitored mix's playback levels
+over the other block, and leaves the inputs per-mix.
+
+With `0x21 = 0x00` -- Dual Mix -- the same two blocks were set again and stayed
+independent, across repeated reads.
+
+**This is why per-mix volumes do not survive a switch.** `KnobLedSelectForMix`
+holds `{ 0x80, 0x01 }` and nothing else, so every `selectMix` writes a single-mix
+value, and `connect()` calls `selectMix` too. `0x21` is in `PreservedAddresses`,
+so the handshake restores whatever mode the deck was in -- and then the adoption
+step immediately overwrites it with Single. A deck the user had put in Dual Mix
+comes back Single, and the first switch flattens the playback tracks.
+
+Two mixes that are independent is what the README promises, and it needs
+`0x21 = 0x00`. The driver cannot currently write it: see `docs/todo.md` on
+`MixId` having two enumerators where the deck has three states.
+
 ## The knob rings' colour: the same 0xc0, with byte 0 choosing the bank
 
     01  c0  0a  <r> <g> <b>  ??  ??  1f  80

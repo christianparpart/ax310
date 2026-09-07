@@ -99,11 +99,11 @@ constexpr std::size_t MixSwitchGaps = 2;
 
 /// What adopting the deck's own state costs a connect, in reports sent.
 ///
-/// One read for the mix it came up monitoring, the writes that choosing a mix
-/// takes -- made whether or not that read answered, because a mix nobody can
-/// read is settled rather than left to disagree with the deck -- and one read
-/// per level in both mixes.
-constexpr std::size_t StateAdoptionReads = 1 + MixSwitchWrites + (MixCount * KnobCount);
+/// One read for the mixer mode and one for the mix it came up monitoring, the
+/// writes that choosing a mix takes -- made whether or not that read answered,
+/// because a mix nobody can read is settled rather than left to disagree with
+/// the deck -- and one read per level in both mixes.
+constexpr std::size_t StateAdoptionReads = 2 + MixSwitchWrites + (MixCount * KnobCount);
 
 /// @param frame The bytes to sum.
 /// @return The 16-bit unsigned sum the chunk header carries.
@@ -163,10 +163,10 @@ TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
     CHECK(harness.transport.sentCount(FakeHidTransport::Channel::FeatureReport)
           == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
                  + protocol::EffectEnables.size() + StateAdoptionReads + ButtonCount);
-    // The mix read and the twelve level reads; the writes beside them are sends,
-    // not reads.
+    // The mode read, the mix read and the twelve level reads; the writes beside
+    // them are sends, not reads.
     CHECK(harness.transport.featureReadCount()
-          == protocol::PreservedAddresses.size() + 1 + (MixCount * KnobCount));
+          == protocol::PreservedAddresses.size() + 2 + (MixCount * KnobCount));
 
     // One gap per handshake payload, one more per button record, and the two a
     // mix switch takes around its ring-colour record: the deck applies only some
@@ -1683,6 +1683,106 @@ TEST_CASE("choosing a mix is fenced with a settings transaction", "[device][mix]
 
     CHECK(sent[4].bytes[3] == 0x1d);
     CHECK(sent[4].bytes[5] == 0x00);
+}
+
+TEST_CASE("a switch on a Dual deck does not put it back into Single", "[device][mix]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    // 0x21 carries the mixer mode and the monitored mix in one byte, and Single
+    // is not a spelling of "creator". On the hardware, writing a single-mix
+    // value copies the monitored mix's System, Game and Chat levels over the
+    // other block -- so a switch that assumed Single flattened the second mix
+    // that the interface exists to show.
+    harness.transport.setRegister(static_cast<std::uint8_t>(protocol::Property::KnobLedSelect),
+                                  { protocol::KnobLedSelectForDualMix });
+
+    REQUIRE(harness.device.connect().has_value());
+    REQUIRE(harness.device.mixerMode() == MixerMode::Dual);
+
+    harness.transport.clearSent();
+    REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
+
+    auto const& sent = harness.transport.sent();
+    auto const mode = std::ranges::find_if(sent, [](FakeHidTransport::Sent const& one) {
+        return one.bytes.size() > 5
+               && one.bytes[3] == static_cast<std::uint8_t>(protocol::Property::KnobLedSelect);
+    });
+
+    REQUIRE(mode != sent.end());
+    CHECK(mode->bytes[5] == protocol::KnobLedSelectForDualMix);
+}
+
+TEST_CASE("a switch on a Single deck keeps it Single", "[device][mix]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+    harness.transport.setRegister(static_cast<std::uint8_t>(protocol::Property::KnobLedSelect),
+                                  { protocol::KnobLedSelectForMix[indexOf(MixId::Creator)] });
+
+    REQUIRE(harness.device.connect().has_value());
+    REQUIRE(harness.device.mixerMode() == MixerMode::Single);
+
+    harness.transport.clearSent();
+    REQUIRE(harness.device.selectMix(MixId::Audience).has_value());
+
+    auto const& sent = harness.transport.sent();
+    auto const mode = std::ranges::find_if(sent, [](FakeHidTransport::Sent const& one) {
+        return one.bytes.size() > 5
+               && one.bytes[3] == static_cast<std::uint8_t>(protocol::Property::KnobLedSelect);
+    });
+
+    REQUIRE(mode != sent.end());
+    CHECK(mode->bytes[5] == protocol::KnobLedSelectForMix[indexOf(MixId::Audience)]);
+}
+
+TEST_CASE("switching mixes writes nobody's levels", "[device][mix][level]")
+{
+    Harness harness;
+
+    // Each mix carries a profile of its own -- all six up on one, one track up
+    // on the other -- which is the arrangement that was being destroyed.
+    constexpr std::array<std::uint8_t, KnobCount> Creator { 0x14, 0x12, 0x10, 0x0e, 0x0c, 0x0a };
+    constexpr std::array<std::uint8_t, KnobCount> Audience { 0x14, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+    for (auto const knob: AllKnobs)
+    {
+        harness.transport.setRegister(
+            protocol::levelAddressOf(protocol::Property::CreatorMixLevels, knob),
+            { Creator[indexOf(knob)] });
+        harness.transport.setRegister(
+            protocol::levelAddressOf(protocol::Property::AudienceMixLevels, knob),
+            { Audience[indexOf(knob)] });
+    }
+    harness.connectInControlMode();
+
+    for (auto const mix: { MixId::Audience, MixId::Creator, MixId::Audience })
+    {
+        INFO("after switching to the " << nameOf(mix) << " mix");
+        harness.transport.clearSent();
+        REQUIRE(harness.device.selectMix(mix).has_value());
+
+        // Not one of the twelve level addresses may be written by a switch.
+        for (auto const& one: harness.transport.sent())
+        {
+            if (one.bytes.size() <= 3)
+                continue;
+
+            for (auto const block: { protocol::Property::CreatorMixLevels,
+                                     protocol::Property::AudienceMixLevels })
+                for (auto const knob: AllKnobs)
+                    CHECK(one.bytes[3] != protocol::levelAddressOf(block, knob));
+        }
+    }
+
+    // And the driver still holds each mix's own profile afterwards.
+    for (auto const knob: AllKnobs)
+    {
+        INFO("the " << nameOf(knob) << " track");
+        CHECK(harness.device.level(MixId::Creator, knob) == Level::fromSteps(Creator[indexOf(knob)]));
+        CHECK(harness.device.level(MixId::Audience, knob) == Level::fromSteps(Audience[indexOf(knob)]));
+    }
 }
 
 TEST_CASE("the ring colour record is spaced from what surrounds it", "[device][mix]")

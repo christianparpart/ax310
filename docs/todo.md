@@ -302,7 +302,23 @@ captures name them.
   not located yet. Each found field is one row in `protocol::Parameters` and
   appears in both screens with no new code -- the deck panel's effects page and
   the desktop window are both built from that table.
-- **`MixId` has two enumerators and the deck has three states.** The deck can be
+- ~~**`MixId` has two enumerators and the deck has three states.**~~ Settled, and
+  it was not a third mix. `MixerMode` in `Types.hpp` now says whether the deck
+  keeps the two apart, `MixId` still says which one is monitored, and
+  `protocol::knobLedSelectFor` is the one place that folds them back into the
+  byte `0x21` carries. Measured on the hardware: in Single the deck copies the
+  monitored mix's System, Game and Chat -- the host playback tracks -- over the
+  other block, and the physical inputs stay per-mix. `selectMix` no longer forces
+  Single, and `0x2e` joined `PreservedAddresses` because the handshake's
+  seven-byte write at `0x27` takes the audience block with it.
+
+  Left: the panel's Dual Mix tile is still inert. `Device` can read and hold the
+  mode now, but nothing drives it except `ax310_probe --mixer-mode`. That wants a
+  `setMixerMode` on the driver and the tile wired to it, and it is worth
+  confirming first what the rings do in Dual -- `0x21` also chooses which of them
+  light, and a mode with no single monitored mix has no obvious answer.
+
+- **The original entry, for the record.** The deck can be
   on the creator mix, on the audience mix, or not split at all -- one master mix,
   which the vendor's interface calls Dual Mix. `MixId` names only the first two,
   and `KnobLedSelectForMix` is indexed by it, so this driver cannot express the

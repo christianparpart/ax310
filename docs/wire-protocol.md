@@ -80,13 +80,13 @@ A byte-addressed register space, reached with a feature report of `[0x01|0x81] 0
 | `0x2a` | creator System level | no | yes |
 | `0x2b` | creator Game level | no | yes |
 | `0x2c` | creator Chat level | no | yes |
-| `0x2e` | audience mix levels (base; +track) | no | yes |
+| `0x2e` | audience mix levels (base; +track) | yes, 7 bytes | yes |
 | `0x31` | audience System level | no | yes |
 | `0x35` | KnobPropertyAt35 | yes, 1 byte | yes |
 | `0x3c` | HeadphoneVolume | yes, 1 byte | yes |
 | `0x3d` | LineOutVolume | yes, 1 byte | yes |
 
-13 addresses are read before the handshake and written back after it, because the captured init sequence is somebody's saved configuration rather than an initialisation. The longest is 7 bytes.
+14 addresses are read before the handshake and written back after it, because the captured init sequence is somebody's saved configuration rather than an initialisation. The longest is 7 bytes.
 
 Writes are refused to: `0x16` — writing there once wedged a deck badly enough to need a power cycle.
 

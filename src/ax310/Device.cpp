@@ -541,7 +541,7 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
     std::array<std::uint8_t, 1> const open { 0x01 };
     std::array<std::uint8_t, 1> const chosen { static_cast<std::uint8_t>(indexOf(mix)) };
     std::array<std::uint8_t, 1> const close { 0x00 };
-    std::array<std::uint8_t, 1> const rings { protocol::KnobLedSelectForMix[indexOf(mix)] };
+    std::array<std::uint8_t, 1> const rings { protocol::knobLedSelectFor(_mixerMode, mix) };
 
     auto const fence = static_cast<std::uint8_t>(protocol::Property::SettingsTransaction);
     auto const selector = static_cast<std::uint8_t>(protocol::Property::SelectedMix);
@@ -597,6 +597,24 @@ MixId Device::selectedMix() const
 {
     std::lock_guard<std::mutex> const lock { _stateMutex };
     return _mix;
+}
+
+std::expected<MixerMode, DeviceError> Device::readMixerMode()
+{
+    std::array<std::uint8_t, 1> values {};
+    return readProperty(std::to_underlying(protocol::Property::KnobLedSelect), values)
+        .transform([&values] {
+            // Anything that is not the Dual value names a single monitored mix,
+            // and the two single values are the only others the vendor writes.
+            return values[0] == protocol::KnobLedSelectForDualMix ? MixerMode::Dual
+                                                                  : MixerMode::Single;
+        });
+}
+
+MixerMode Device::mixerMode() const
+{
+    std::lock_guard<std::mutex> const lock { _stateMutex };
+    return _mixerMode;
 }
 
 std::expected<MixId, DeviceError> Device::readSelectedMix()
@@ -846,6 +864,20 @@ void Device::adoptTheDecksOwnState()
     // in a 0xc0 record rather than a property and the handshake has just written
     // creator blue over it. Selecting the mix the deck came back on writes that
     // colour, so the rings, the audio and whatever draws this agree again.
+    // The mode first, because selecting a mix writes the register that carries
+    // it. Single means the deck keeps one mix of the host's audio and copies the
+    // monitored mix's playback tracks over the other block, so a switch that
+    // assumed Single would flatten a Dual deck's second mix on the way past.
+    if (auto const mode = readMixerMode(); mode)
+    {
+        std::lock_guard<std::mutex> const lock { _stateMutex };
+        _mixerMode = *mode;
+    }
+    else
+    {
+        logTo(_logger, LogLevel::Warning, "could not read the mixer mode: {}", describe(mode.error()));
+    }
+
     auto const asked = readSelectedMix();
     if (!asked)
         logTo(_logger, LogLevel::Warning, "could not read the selected mix: {}", describe(asked.error()));

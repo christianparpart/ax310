@@ -146,6 +146,42 @@ enum class MixId : std::uint8_t
     Audience = 1
 };
 
+/// Whether the deck keeps the two mixes apart.
+///
+/// Not a second name for MixId. `MixId` says which mix is being monitored;
+/// this says whether there are two of them to monitor. The deck carries both in
+/// one register, and confusing them is what made a switch flatten somebody's
+/// levels: in Single the deck copies the monitored mix's playback tracks over
+/// the other block, so only Dual gives each mix a profile of its own.
+enum class MixerMode : std::uint8_t
+{
+    /// One mix of the host's audio, shared. The physical inputs stay per-mix.
+    Single = 0,
+
+    /// Two independent mixes, which is what the interface draws.
+    Dual = 1
+};
+
+/// Number of mixer modes, derived from the enumeration rather than stated.
+inline constexpr std::size_t MixerModeCount = enumerators::denseEnumeratorCount<MixerMode>();
+
+/// What each mixer mode is called, indexed by the enumerator.
+inline constexpr std::array<std::string_view, MixerModeCount> MixerModeNames { "Single", "Dual" };
+
+/// @param mode The mode to name.
+/// @return Its name.
+[[nodiscard]] constexpr std::string_view nameOf(MixerMode mode) noexcept
+{
+    return MixerModeNames[static_cast<std::size_t>(mode)];
+}
+
+/// @param mode The mode to index.
+/// @return Its position, for indexing a table.
+[[nodiscard]] constexpr std::size_t indexOf(MixerMode mode) noexcept
+{
+    return static_cast<std::size_t>(mode);
+}
+
 /// Number of mixes, derived from the enumeration rather than stated.
 inline constexpr std::size_t MixCount = enumerators::denseEnumeratorCount<MixId>();
 

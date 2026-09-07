@@ -279,6 +279,19 @@ class Device
     /// @return The mix Property::SelectedMix names, or why the read failed.
     [[nodiscard]] std::expected<MixId, DeviceError> readSelectedMix();
 
+    /// @return Whether the deck is keeping the two mixes apart, as last read.
+    [[nodiscard]] MixerMode mixerMode() const;
+
+    /// Reads whether the deck is keeping the two mixes apart.
+    ///
+    /// Worth asking rather than assuming, and asking *before* selecting a mix:
+    /// one register carries the mode and the monitored mix together, so a switch
+    /// that assumed Single would put a Dual deck into Single and take the second
+    /// mix's playback levels with it.
+    ///
+    /// @return The mode Property::KnobLedSelect names, or why the read failed.
+    [[nodiscard]] std::expected<MixerMode, DeviceError> readMixerMode();
+
     /// Sets one DSP parameter.
     ///
     /// The framed command family has no read-back, so this edits a cached body
@@ -430,6 +443,12 @@ class Device
 
     /// Which mix the deck is monitoring, as last read from it or last chosen.
     MixId _mix = MixId::Creator;
+
+    /// Whether the deck is keeping the two mixes apart, as last read from it.
+    ///
+    /// Single until something says otherwise, because that is what the handshake
+    /// leaves behind.
+    MixerMode _mixerMode = MixerMode::Single;
 
     /// Every track's level in both mixes, as last read from the deck or last
     /// written to it. Empty where neither has happened.

@@ -496,7 +496,7 @@ inline constexpr std::array<LightColour, MixCount> MixRingColours {
     LightColour { .red = 0xff, .green = 0x7d, .blue = 0x00 }, // Audience, orange
 };
 
-/// What Property::KnobLedSelect carries for each mix, indexed by MixId.
+/// What Property::KnobLedSelect carries for a single mix, indexed by MixId.
 ///
 /// Captured from three of the vendor's actions, which together read this address
 /// as carrying the mixer mode and the monitored mix in one byte: `0x80` a single
@@ -506,6 +506,25 @@ inline constexpr std::array<LightColour, MixCount> MixRingColours {
 /// Writing SelectedMix alone moves the audio and leaves the rings behind; this is
 /// the half that moves them.
 inline constexpr std::array<std::uint8_t, MixCount> KnobLedSelectForMix { 0x80, 0x01 };
+
+/// What Property::KnobLedSelect carries for Dual Mix.
+///
+/// The mode is not a property of a mix, which is why it is not in the table
+/// above: in Dual there is no single monitored mix for the byte to name.
+inline constexpr std::uint8_t KnobLedSelectForDualMix = 0x00;
+
+/// @param mode Whether the mixes are kept apart.
+/// @param mix Which mix is monitored, when only one is.
+/// @return What Property::KnobLedSelect carries for that pair.
+///
+/// The register conflates the two, and getting it from one place is what stops a
+/// caller writing a single-mix value while meaning only to change which mix is
+/// monitored -- which the deck reads as an instruction to copy the monitored
+/// mix's playback tracks over the other block. See hardware-facts.md.
+[[nodiscard]] constexpr std::uint8_t knobLedSelectFor(MixerMode mode, MixId mix) noexcept
+{
+    return mode == MixerMode::Dual ? KnobLedSelectForDualMix : KnobLedSelectForMix[indexOf(mix)];
+}
 
 /// Where the surround light strip is configured.
 ///
@@ -1002,12 +1021,14 @@ struct PreservedAddress
 
 /// Every property address the captured init sequence writes.
 ///
-/// `0x2e`, the audience mix's levels, is deliberately **not** here. It looks like
-/// an omission -- the creator block at `0x27` is preserved and its twin is not --
-/// but neither the init nor the shutdown sequence writes `0x2e`, so there is
-/// nothing to put back. Adding it would mean writing a register the vendor only
-/// writes when enabling Dual Mix, on every connect, to restore a value nothing
-/// had changed.
+/// `0x2e`, the audience mix's levels, **is** here, and the reasoning that once
+/// left it out was wrong. Neither sequence names that address, so there looked to
+/// be nothing to put back -- but the handshake writes the creator block whole,
+/// as seven bytes at `0x27`, and measured on a deck in Dual Mix that takes the
+/// audience block with it: both come back `0a` across the board. Restoring only
+/// `0x27` then leaves the audience mix flattened, which is a person's second mix
+/// gone on every attach. An address is worth preserving if the handshake changes
+/// it, not only if the handshake names it.
 ///
 /// Read before the handshake and written back after, because that sequence is
 /// somebody else's saved configuration rather than an initialisation. Most of
@@ -1030,6 +1051,7 @@ inline constexpr auto PreservedAddresses = std::to_array<PreservedAddress>({
     { .address = 0x22, .length = 1 },
     { .address = 0x23, .length = 1 },
     { .address = 0x27, .length = 7 },
+    { .address = 0x2e, .length = 7 },
     { .address = 0x35, .length = 1 },
     { .address = 0x3c, .length = 1 },
     { .address = 0x3d, .length = 1 },
