@@ -77,6 +77,34 @@ application was the thing not using it. A test can only see this by doing what
 the application does: create the window and never map it, and grab it more than
 once.
 
+**A truncated `.ninja_deps` makes every build a full rebuild, and says so only
+if asked.** One build directory started recompiling all 152 translation units
+every time while its siblings settled at zero. The preset was innocent -- the
+suspect was `ENABLE_TIDY`, which only `clang-debug` sets, and it had nothing to
+do with it. `ninja -d explain` gave the real answer: *stored deps info out of
+date* for every object, including Catch2's and hidapi's, because the recorded
+dependency entries all predated the objects they belonged to.
+
+The cause is in one line that an ordinary build never prints:
+
+```
+$ ninja -C out/build/<preset> -t deps > /dev/null
+ninja: warning: premature end of file; recovering
+```
+
+The log had been cut off mid-record, so ninja recovered a prefix that stopped
+before every recent entry. Killing a build partway, or letting two of them write
+one build directory at once, is enough to do it. The fix is to delete the log and
+build once; it rebuilds itself and settles:
+
+```
+rm out/build/<preset>/.ninja_deps && cmake --build --preset <preset>
+```
+
+Worth checking before believing that a preset, a compiler wrapper or a generator
+is at fault: `ninja -n` right after a successful build should want to do nothing,
+and if it does not, that one command names the reason.
+
 **`pkill -f` matches the shell that runs it.** The pattern is tested against every
 process's full command line, and the command line of the shell executing `pkill -f
 "http.server 8787"` contains that string — so the shell kills itself, the rest of
