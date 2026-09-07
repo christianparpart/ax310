@@ -541,18 +541,55 @@ replaying it would overwrite the level the person at the deck had chosen. `0x22`
 has no recorded meaning; the rings follow without it, so it stays unwritten until
 something shows what it does.
 
-**The colour goes out *after* the switch, and the fence does not change that.**
-Replaying the vendor's order -- colour first, switch last -- was done on the
-assumption that the fence made a colour arriving early land on the mix being
-switched to. Measured: it does not. A deck brought up on the audience mix showed
-`0x15 = 01` and `0x21 = 01`, an orange panel, orange tiles, and six **blue**
-rings. A record cannot be aimed, so the deck gives it to whichever mix is
-selected when it arrives, and a colour sent ahead of the switch paints the mix
-being left -- one step behind, on every switch, forever.
+### A ring colour that did not land, and two explanations for it
 
-Why the earlier reading said otherwise: from a state where both mixes already
-hold the same colour, the first switch looks right. It is the second that shows
-it, and the checks that had been made were single switches.
+**Measured:** a deck brought up on the audience mix showed `0x15 = 01`,
+`0x21 = 01`, an orange panel, orange tiles, and six **blue** rings at 50%. Blue
+at 50% is what the handshake imposes, so the ring-colour record that should have
+replaced it did not take effect.
+
+**Not measured, and both still open.** Two things could produce that, and this
+deck has not been asked which:
+
+1. *The order.* A record carries no mix, so the deck may apply it to whichever
+   mix is selected when it arrives -- in which case a colour sent before the
+   switch paints the mix being left, one step behind forever.
+2. *The spacing.* The record went out with no gap on either side, between a
+   property write and the fence close.
+
+The captures argue **against** the first. `switch-mix.pcap`, read with
+`ax310_decode`, is the vendor doing this successfully:
+
+```
+  0              SET 0x1d = 01          fence open
+  1   +43.817ms  SET 0x1e = 0d          knob LED brightness
+  2  +289.473ms  SET 0xc0  01 c0 0a ff 7d 00 fd 00 1f 80    orange, BEFORE the switch
+  3  +126.507ms  SET 0x21 = 01
+  4  +248.094ms  SET 0x22 = 01
+  5  +248.667ms  SET 0x27 = 14
+  6   +43.276ms  SET 0x15 = 01          the switch
+  7   +43.000ms  SET 0x1d = 00          fence close
+```
+
+The vendor writes the colour four commands *ahead* of `0x15` and it works. So
+"the deck applies a record to the mix selected when it arrives" cannot be the
+whole story, and the ordering explanation is an inference this capture
+contradicts rather than a finding.
+
+What the capture does show is scale. The vendor never leaves less than 43 ms
+between any two commands here, and gives that record 289 ms ahead of it and 126
+after. Across every capture in this project, two `0xc0` records are never closer
+than about 250 ms; the only gaps under 5 ms are a record followed by a *read*.
+This driver was sending the record with none at all.
+
+Against that: 10 ms was enough to make the four button records all land, which is
+measured and is recorded above. So a gap of some size is needed and 10 ms can be
+sufficient -- which leaves it unclear why this one record failed.
+
+Both changes are in the driver now, the order and a gap, and **neither is
+established as the fix.** What settles it is a deck: switch back and forth
+several times and watch whether the rings follow, then take the order back to the
+vendor's and watch again.
 
 ## The knob rings' colour: the same 0xc0, with byte 0 choosing the bank
 

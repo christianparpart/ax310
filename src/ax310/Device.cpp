@@ -555,22 +555,22 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
     //   * the ring colour, because the record carries no mix -- the deck applies
     //     it to whichever mix is selected, so the new mix's colour has to be said.
     //
-    // The colour goes **after** the switch, which is not the order the vendor's
-    // capture has. A record cannot be aimed at a mix, and the deck applies it to
-    // the one that is selected when it arrives, so a colour sent ahead of the
-    // switch is a colour written onto the mix being left. That is what a deck on
-    // the audience mix showing blue rings under an orange panel is: every switch
-    // painting the mix behind it, one step out of step forever.
+    // The colour goes after the switch, which is not the order the vendor's own
+    // capture has -- it writes the colour first and its rings follow. The reason
+    // for differing is that a record carries no mix, so the deck may apply it to
+    // whichever one is selected when it arrives; the capture says that cannot be
+    // the whole story.
     //
-    // The vendor's order was replayed on the assumption that the fence made the
-    // difference. It does not.
+    // The record is spaced from what surrounds it. Sent with no gap on either
+    // side, it did not land: a cold deck came up on the audience mix still
+    // wearing the handshake's creator blue.
     //
-    // The record is spaced from what surrounds it. The deck applies only some of a
-    // run of records, and crowding is what decides it -- this one has a property
-    // write immediately ahead of it and the fence close immediately behind, and it
-    // was dropped often enough that a cold deck came up on the audience mix still
-    // wearing the handshake's creator blue. Every other run of writes this driver
-    // sends is paced; this was the one that was not.
+    // Which of the two changes here fixes that is not settled. The vendor's own
+    // capture writes the colour four commands *ahead* of the switch and it works,
+    // which argues against the order being what matters -- but it also leaves 289
+    // ms in front of that record and 126 ms behind it, where this sent it with
+    // none. See hardware-facts.md; a deck settles it, and this is the guess until
+    // one does.
     auto const& colour = protocol::MixRingColours[indexOf(mix)];
     auto const record = protocol::knobColourRecord(colour.red, colour.green, colour.blue);
 
