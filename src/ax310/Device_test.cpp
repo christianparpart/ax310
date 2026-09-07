@@ -37,6 +37,10 @@ struct Harness
     RecordingListener listener;
     Device device { transport, clock, logger, listener };
 
+    /// The transport stamps every send from the same clock the driver sleeps
+    /// on, so a case can ask how far apart two writes actually went out.
+    Harness() { transport.useClock(clock); }
+
     /// Puts a control-mode deck on the fake bus.
     void presentControlDevice()
     {
@@ -124,7 +128,11 @@ TEST_CASE("connect opens the deck and wakes it", "[device][connect]")
           == protocol::PreservedAddresses.size() + commands::InitPayloads.size()
                  + protocol::EffectEnables.size() + ButtonCount);
     CHECK(harness.transport.featureReadCount() == protocol::PreservedAddresses.size());
-    CHECK(harness.clock.totalSlept() == 10ms * commands::InitPayloads.size());
+
+    // One gap per handshake payload, and one more per button record: the deck
+    // applies only some of a run of records sent back to back, so the four
+    // colours are spaced the same way the handshake is.
+    CHECK(harness.clock.totalSlept() == 10ms * (commands::InitPayloads.size() + ButtonCount));
 }
 
 TEST_CASE("connect goes straight to the deck's own device", "[device][connect]")
@@ -1293,6 +1301,31 @@ TEST_CASE("connect lights every button, each in a colour of its own", "[device][
     // brightness scaling collapsing two colours into one would be caught too.
     std::ranges::sort(colours);
     CHECK(std::ranges::adjacent_find(colours) == colours.end());
+}
+
+TEST_CASE("the button records are spaced, so the deck applies all four", "[device][connect][light]")
+{
+    Harness harness;
+    harness.presentControlDevice();
+
+    REQUIRE(harness.device.connect().has_value());
+
+    // The deck applies only some of a run of records sent back to back, and the
+    // four button colours are one such run. Sent with no gap the last one wins
+    // and the other three stay dark, which is what the deck was doing.
+    //
+    // Asserted as strictly increasing rather than against a duration: the clock
+    // only moves when something sleeps, so a later instant *is* a gap, and the
+    // case does not have to know how long the driver chose to wait.
+    auto const& sent = harness.transport.sent();
+    REQUIRE(sent.size() > ButtonCount);
+    auto const first = sent.size() - ButtonCount;
+
+    for (std::size_t index = 1; index < ButtonCount; ++index)
+    {
+        INFO("between button record " << index - 1 << " and " << index);
+        CHECK(sent[first + index].at > sent[first + index - 1].at);
+    }
 }
 
 TEST_CASE("a button is refused when the deck is not connected", "[device][light]")

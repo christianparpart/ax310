@@ -709,6 +709,11 @@ void Device::lightButtonsWithDefaults()
                   "could not light the {} button: {}",
                   nameOf(button),
                   describe(lit.error()));
+
+        // Spaced, because the deck applies only some of a run of records sent
+        // back to back -- the same reason the shutdown sequence is paced. Without
+        // this only the last of the four lights, and the other three stay dark.
+        _clock.sleepFor(CommandGap);
     }
 }
 

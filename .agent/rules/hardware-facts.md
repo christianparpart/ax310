@@ -401,9 +401,12 @@ so `FirstButtonSelector + index` lights the wrong two and the mapping is a table
 The selector table is confirmed **in the output direction**, by driving all four
 in one pass to red, green, blue and yellow and reading the deck: each colour
 appeared under the button the table names. One pass rather than four, so the
-answer cannot be an artefact of writes landing out of order -- and four
-consecutive records at `0xc0` all take effect, with no pacing needed between
-them.
+answer cannot be an artefact of writes landing out of order.
+
+That pass was spaced, and the spacing is load-bearing: four consecutive records
+at `0xc0` with no gap between them do **not** all take effect. See the section
+below, and a deck that attaches with one button lit in the last record's colour
+and the other three dark.
 
 ### Records sent back to back are not all applied
 

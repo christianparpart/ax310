@@ -248,9 +248,10 @@ captures name them.
   `ff 00 00` is red, so bytes 7-9 are R-G-B as written.
 - ~~**Which selector is which physical button.**~~ Settled on hardware: all four
   driven in one pass to red, green, blue and yellow, each appearing under the
-  button `ButtonColourSelectors` names. Four consecutive records at `0xc0` all
-  land, with no pacing between them. The input direction -- whether `ButtonBits`
-  matches -- is still open, and is now a one-press experiment.
+  button `ButtonColourSelectors` names. That pass was spaced: four consecutive
+  records at `0xc0` sent with no gap do **not** all land, which is the deck
+  attaching with only the last one lit. `Device::lightButtonsWithDefaults` paces
+  them the way the handshake and the shutdown sequence are paced.
 - **Per-mix knob colour needs the mix selected first** — the ring record carries
   no mix, so setting the audience mix's colour means selecting it, writing, and
   selecting back. Whether the deck keeps both colours or the driver must is

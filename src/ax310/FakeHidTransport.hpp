@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "IClock.hpp"
 #include "IHidTransport.hpp"
 #include "Protocol.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <map>
 #include <optional>
@@ -38,6 +40,11 @@ class FakeHidTransport final: public IHidTransport
     {
         Channel channel;
         std::vector<std::uint8_t> bytes;
+
+        /// When it went out, from the clock useClock() was given. The epoch
+        /// when there is none, so two of them only compare meaningfully once a
+        /// case has asked for timing.
+        std::chrono::steady_clock::time_point at;
     };
 
     // --- Scripting ---------------------------------------------------------
@@ -49,6 +56,17 @@ class FakeHidTransport final: public IHidTransport
     {
         _byProduct[productId] = std::move(interfaces);
     }
+
+    /// Stamps every recorded send with @p clock, so a case can assert on the
+    /// spacing between two of them.
+    ///
+    /// The deck applies only some of a run of records sent back to back, so how
+    /// far apart two writes went out is behaviour worth pinning and not merely
+    /// an implementation detail. Optional, because most cases care only about
+    /// the bytes.
+    ///
+    /// @param clock The clock to read the send instant from.
+    void useClock(IClock& clock) noexcept { _clock = &clock; }
 
     /// Queues one report for a later read() to return.
     /// @param report The bytes to hand over.
@@ -290,7 +308,10 @@ class FakeHidTransport final: public IHidTransport
         if (_sendError && _sent.size() >= _sendFailsAfter)
             return std::unexpected(*_sendError);
 
-        _sent.push_back(Sent { .channel = channel, .bytes = { report.begin(), report.end() } });
+        _sent.push_back(Sent { .channel = channel,
+                               .bytes = { report.begin(), report.end() },
+                               .at = _clock ? _clock->now()
+                                            : std::chrono::steady_clock::time_point {} });
 
         if (_closeAfter && _sent.size() >= *_closeAfter)
             _isOpen = false;
@@ -298,6 +319,7 @@ class FakeHidTransport final: public IHidTransport
         return {};
     }
 
+    IClock* _clock = nullptr;
     std::map<std::uint16_t, std::vector<HidInterface>> _byProduct;
     std::deque<std::vector<std::uint8_t>> _reads;
     std::deque<std::vector<std::uint8_t>> _featureReplies;
