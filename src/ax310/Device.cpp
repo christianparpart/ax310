@@ -416,6 +416,17 @@ std::expected<void, DeviceError> Device::writeProperty(std::uint8_t address,
     return _transport.sendFeatureReport(framed);
 }
 
+std::expected<void, DeviceError> Device::writePropertyPaced(std::chrono::milliseconds pacingDelay,
+                                                            std::uint8_t address,
+                                                            std::span<std::uint8_t const> values)
+{
+    // Ahead of the write rather than behind it, so a step that says it is spaced
+    // is separated from what it follows, and the last step of a sequence does not
+    // pay for a gap with nothing on the other side of it.
+    _clock.sleepFor(pacingDelay);
+    return writeProperty(address, values);
+}
+
 std::expected<void, DeviceError> Device::sendFramed(protocol::FramedCommand command,
                                                     std::span<std::uint8_t const> body)
 {
@@ -574,19 +585,11 @@ std::expected<void, DeviceError> Device::selectMix(MixId mix)
     auto const& colour = protocol::MixRingColours[indexOf(mix)];
     auto const record = protocol::knobColourRecord(colour.red, colour.green, colour.blue);
 
-    // A gap is a step of the sequence like the writes are, so it reads as one.
-    auto const pace = [this]() -> std::expected<void, DeviceError> {
-        _clock.sleepFor(CommandGap);
-        return {};
-    };
-
     return writeProperty(fence, open)
         .and_then([&] { return writeProperty(ringSelect, rings); })
         .and_then([&] { return writeProperty(selector, chosen); })
-        .and_then(pace)
-        .and_then([&] { return writeProperty(protocol::ButtonColourAddress, record); })
-        .and_then(pace)
-        .and_then([&] { return writeProperty(fence, close); })
+        .and_then([&] { return writePropertyPaced(CommandGap, protocol::ButtonColourAddress, record); })
+        .and_then([&] { return writePropertyPaced(CommandGap, fence, close); })
         .transform([&] {
             std::lock_guard<std::mutex> const lock { _stateMutex };
             _mix = mix;

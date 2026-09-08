@@ -337,6 +337,22 @@ class Device
     [[nodiscard]] std::expected<void, DeviceError> writeProperty(std::uint8_t address,
                                                                  std::span<std::uint8_t const> values);
 
+    /// Writes one register a gap after whatever came before it.
+    ///
+    /// The gap belongs to the write rather than sitting beside it: a sequence
+    /// that has to be spaced says so at the step needing the spacing, instead of
+    /// carrying a separate step whose only job is to wait. Unlike
+    /// writeLevelSpaced the wait is unconditional -- this paces a sequence being
+    /// sent, not a stream of writes arriving from a hand.
+    ///
+    /// @param pacingDelay How long to wait before writing.
+    /// @param address Where to write, named or not.
+    /// @param values The bytes to put there.
+    /// @return Nothing, or why the write failed.
+    [[nodiscard]] std::expected<void, DeviceError> writePropertyPaced(
+        std::chrono::milliseconds pacingDelay, std::uint8_t address,
+        std::span<std::uint8_t const> values);
+
   private:
     /// What the registers held before the init sequence overwrote them.
     ///
